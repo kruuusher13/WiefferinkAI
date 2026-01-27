@@ -1,0 +1,12 @@
+__pycache__/
+*.pyc
+.DS_Store
+.env
+venv/
+env/
+node_modules/
+server.log
+logs/
+*.bak
+*.debug
+*.prod
