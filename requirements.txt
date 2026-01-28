@@ -1,12 +1,26 @@
+# Core FastAPI
 fastapi
-uvicorn
-langgraph
-langchain-google-genai
-langchain-core
-langchain-community
-pydantic
-pyodbc
-pandas
-tabulate
-requests
+uvicorn[standard]
+websockets
 python-dotenv
+
+# Audio Processing
+numpy
+scipy
+
+# Communication
+gTTS
+twilio
+
+# Pydantic v2 (Python 3.14 compatible)
+pydantic>=2.0
+pydantic-settings
+
+# HTTP & API
+requests
+
+# Google Gemini & LangChain
+google-genai
+langchain-google-genai
+langgraph
+langchain-core

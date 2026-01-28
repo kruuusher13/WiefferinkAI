@@ -1,117 +1,102 @@
-# WiefferinkAI / GarageAI
+# GarageAI v2.0 - Voice-Enabled Garage Assistant
 
-**GarageAI** is a voice-enabled AI assistant designed for Dutch garages using the WinCar management system. It integrates **FastAPI**, **LangGraph**, **Google Gemini**, and **Vapi.ai** to provide a seamless voice experience for checking work orders, stocks, and scheduling appointments.
+GarageAI is a cutting-edge voice assistant designed for automotive workshops. It serves as a bridge between **Twilio** (telephony) and **Google Gemini Live** (multimodal AI), enabling real-time, low-latency (<800ms) conversation with customers about appointments, vehicle status, and parts.
 
-## 🚀 Features
+## 🚀 New in v2.0
 
-- **Voice Interface**: Powered by Vapi.ai for low-latency voice conversations.
-- **Smart Agent**: Uses LangGraph and Google Gemini 2.0 Flash for intelligent reasoning.
-- **WinCar Integration**: Connects to a SQL Server database to read/write garage data:
-  - **Identify Customers**: Recognizes customers by phone number.
-  - **Werkplaats (Workshop)**: Checks status of work orders.
-  - **Magazijn (Warehouse)**: Checks part stock and pricing.
-  - **Financieel (Finance)**: Generates payment links.
-  - **Agenda**: Schedules appointments (Prototype).
-- **Streaming Responses**: Implements Server-Sent Events (SSE) for real-time voice responses.
-- **Robust Error Handling**: Automatically handles connectivity issues and LLM failures.
+- **🤖 Harry AI Persona** - The AI introduces itself as "Harry" and greets the user first.
+- **📊 Real-time Dashboard** - A premium glassmorphism web interface for monitoring and testing.
+- **🗄️ Database Insight** - Direct visualization of WinCar tables (Klanten, Werkorders, Voorraad) in the web app.
+- **✍️ Prototype Prompt Window** - Live-inject new system instructions without restarting the server.
+- **⚙️ Auto-Initialization** - The database is automatically seeded and initialized on every server run.
+- **🔊 Sample Rate Optimization** - Fixed slow-motion audio by handling 16kHz input and 24kHz output paths correctly.
 
-## 📋 Prerequisites
+## 📋 Quick Start
 
-Before running the system, ensure you have the following installed:
-
-- **Docker**: For running the SQL Server container.
-- **Python 3.12+**: For the backend server.
-- **Ngrok**: For exposing your local server to Vapi.ai.
-- **Vapi.ai Account**: To configure the voice assistant.
-- **Google AI Studio API Key**: For Gemini models.
-
-## 🛠️ Installation
-
-1.  **Clone the Repository**:
-    ```bash
-    git clone https://github.com/kruuusher13/WiefferinkAI.git
-    cd WiefferinkAI
-    ```
-
-2.  **Install Dependencies**:
-    ```bash
-    pip install -r requirements.txt
-    ```
-
-## ⚙️ Configuration
-
-1.  **Set Environment Variables**:
-    You need a Google API Key. You can set it temporarily in your terminal:
-    ```bash
-    export GOOGLE_API_KEY="your_google_api_key_here"
-    ```
-    Or create a `.env` file (not monitored by git) if you implement `python-dotenv` loading.
-
-## 🏃‍♂️ Usage
-
-### 1. Start the System
-We have provided a convenience script `start_all.sh` that checks for Docker, starts the database, and launches the server.
+### Fast Setup
 
 ```bash
-./start_all.sh
+# 1. Create virtual environment
+python3 -m venv .venv && source .venv/bin/activate
+
+# 2. Install dependencies  
+pip install -r requirements.txt
+
+# 3. Configure environment
+cp .env.example .env  # Then add your GOOGLE_API_KEY
+
+# 4. Start server (This will automatically initialize the DB)
+python -m uvicorn bridge.api:app --port 8000 --reload
+
+# 5. Open Dashboard
+open http://localhost:8000/web/index.html
 ```
 
-This script will:
-- Check if the `wincar_sql` Docker container is running (and start it if needed).
-- Wait for the database to be ready.
-- Start the FastAPI server on `http://0.0.0.0:8000`.
+## 🏗️ Architecture
 
-### 2. Expose Local Server
-In a separate terminal window, start Ngrok to tunnel your local port 8000 to the internet:
-
-```bash
-ngrok http 8000
+```
+GarageAI/
+├── app/                    # Core Logic
+│   ├── graph.py           # LangGraph agent
+│   ├── tools.py           # WinCar database tools
+│   ├── init_db.py         # Database initialization logic
+│   └── mock_wincar_db.sql # SQL Seed script
+├── bridge/                 # Interface Layer
+│   ├── api.py             # FastAPI & DB Visualization Endpoints
+│   ├── telephony.py       # WebSocket bridges (Twilio + Web)
+│   └── audio.py           # Audio resampling (16k in / 24k out)
+├── web_test/               # Browser Dashboard v2
+│   ├── index.html         # Premium Dashboard UI
+│   └── static/client.js   # Advanced WebSocket & UI Logic
+├── deployment/             # Production Deployment
+│   ├── deploy_cloudrun.sh # Google Cloud Run script
+│   └── TWILIO_SETUP.md    # Twilio configuration guide
+├── docs/                   # Documentation
+│   ├── ARCHITECTURE.md    # System design
+│   ├── PRD.md             # Product requirements
+│   └── API_REFERENCE.md   # Endpoint documentation
+├── .env                    # Environment variables (not committed)
+├── requirements.txt        # Python dependencies
+└── RUN_ME.md              # Quick start guide
 ```
 
-Copy the simplified HTTPS URL provided by Ngrok (e.g., `https://random-name.ngrok-free.app`).
+## 🛠️ Available Tools
 
-### 3. Configure Vapi.ai
-1.  Go to the [Vapi Dashboard](https://dashboard.vapi.ai).
-2.  Select or Create an Assistant.
-3.  Set the **Server URL** to your Ngrok URL appended with `/chat`:
-    ```
-    https://<your-ngrok-url>/chat
-    ```
-4.  (Optional) Import `vapi_assistant_config.json` if you have specific voice settings.
+| Tool | Description |
+|------|-------------|
+| `identify_customer` | Look up customer by phone number |
+| `check_werkorder_status` | Check repair order status |
+| `check_part_stock` | Query parts inventory |
+| `schedule_appointment` | Book service appointments |
 
-## 🧪 Testing
+## 🌐 API Endpoints
 
-### Local Logic Test
-To test the agent logic without Vapi (Text-based):
-```bash
-python test_logic_cli.py
+| Endpoint | Method | Description |
+|----------|--------|-------------|
+| `/` | GET | Health check |
+| `/api/db/{name}` | GET | Fetch database table rows for visualization |
+| `/ws/web` | WebSocket | Web dashboard interface (PCM 16k/24k) |
+| `/ws/twilio` | WebSocket | Twilio media stream (mu-law 8k) |
+| `/web/index.html` | GET | Dashboard UI |
+
+## 🔧 Configuration
+
+### Required Environment Variables
+
+```env
+GOOGLE_API_KEY=your_gemini_api_key
+TWILIO_ACCOUNT_SID=your_twilio_sid
+TWILIO_AUTH_TOKEN=your_twilio_auth_token
 ```
 
-### Local Server Test
-To simulate a Vapi request to your local server:
-```bash
-python test_local_server.py
-```
+## 📈 Mission Metrics
 
-### Database visualization
-To see what is currently in the mock database:
-```bash
-python view_db.py
-```
+| Metric | Target | Status |
+|--------|--------|--------|
+| Voice Latency | < 800ms | ✅ Optimized |
+| Audio Quality | Clear | ✅ Resampling Corrected |
+| DB Sync | Real-time | ✅ Visualizer Added |
 
-## 📂 Project Structure
+---
 
-- `main.py`: FastAPI application entry point, handles Vapi streams.
-- `graph.py`: LangGraph definitions (Agent, Tools, State).
-- `tools.py`: Python functions wrapping SQL queries for WinCar modules.
-- `init_db.py`: Database initialization and seeding script.
-- `mock_wincar_db.sql`: Schema and seed data for the mock SQL Server.
-
-## ⚠️ Troubleshooting
-
-- **llm-failed**: Check if your Ngrok tunnel is active and the URL found in the logs matches the one in Vapi. Also verify your `GOOGLE_API_KEY`.
-- **Database Connection Error**: Ensure the Docker container `wincar_sql` is running (`docker ps`).
-- **404 Not Found**: Ensure you added `/chat` to the end of your Ngrok URL in Vapi.
-
-## 📄 License
-Private/Proprietary.
+**Built with ❤️ for Garage Wiefferink**

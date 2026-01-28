@@ -14,7 +14,7 @@ def main():
     state = agent_app.get_state(config)
     if not state.values:
         print("⚙️  Initializing Conversation...")
-        initial_input = {"messages": get_initial_messages()}
+        initial_input = {"messages": get_initial_messages() + [HumanMessage(content="Hello")]}
         agent_app.invoke(initial_input, config=config)
     
     print("💬 You can start chatting. Type 'quit' to exit.")

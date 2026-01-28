@@ -1,57 +1,119 @@
 # GarageAI Architecture Documentation
 
 ## 1. System Overview
-GarageAI Integration is a voice-enabled assistant designed for Dutch automotive garages using the **WinCar DMS**. Ideally, it intercepts voice calls (via Vapi.ai), queries the WinCar database for real-time information, and performs actions like generating payment links.
+GarageAI Integration is a low-latency, voice-enabled assistant for Dutch automotive garages using **WinCar DMS**. The system acts as a **Telephony Bridge**, connecting incoming phone calls (via Twilio) directly to Google's **Gemini Multimodal Live API**.
 
-**Core Goal**: Automate customer service interactions (status checks, price checks, payment requests) using natural language, strictly in Dutch.
+**Core Goal**: Provide a conversational AI that answers in <800ms, speaks native Dutch, and executes read-only/safe-write operations on the WinCar database.
 
-## 2. Component Architecture
+## 2. Architecture: The "Telephony Bridge"
+This architecture replaces the previous Polling/Vapi approach with a direct streaming connection to minimize latency.
 
-### 2.1 API Layer (`main.py`)
-- **Technology**: FastAPI
-- **Responsibility**: Exposes a `/chat` endpoint for webhook integration (Vapi.ai).
-- **Flow**:
-    1. Receives JSON payload with user message and call ID.
-    2. Initializes/Retrieves LangGraph state.
-    3. Invokes the Agent Graph.
-    4. Returns a JSON response with the Assistant's spoken text.
+```mermaid
+sequenceDiagram
+    participant User
+    participant Twilio
+    participant FastAPI as GarageAI_Bridge
+    participant Gemini as Gemini_Live_API
+    participant WinCar as SQL_Database
 
-### 2.2 Agent Logic (`graph.py`)
-- **Technology**: LangGraph + LangChain + Gemini Flash 1.5
-- **Structure**:
-    - **Agent Node**: Decides whether to reply or call a tool based on the System Prompt.
-    - **Tools Node**: Executes specific WinCar functions.
-    - **Persistence**: Uses `MemorySaver` to maintain conversation context across turns.
-- **System Prompt**: Enforces strict "Dutch Only" and "Max 2 Sentences" rules, mimicking a professional garage assistant.
+    User->>Twilio: Calls Phone Number
+    Twilio->>FastAPI: HTTP Webhook (POST /voice)
+    FastAPI-->>Twilio: TwiML <Connect><Stream url="wss://..."/></Connect>
+    Twilio->>FastAPI: WebSocket Connect (/ws/stream)
+    FastAPI->>Gemini: WebSocket Connect (wss://generativelanguage...)
+    
+    par Audio Stream
+        Twilio->>FastAPI: Audio (8kHz µ-law)
+        FastAPI->>FastAPI: Transcode (µ-law -> PCM 16kHz)
+        FastAPI->>Gemini: Audio (PCM 16kHz)
+    and Response Stream
+        Gemini->>FastAPI: Audio (PCM 24kHz)
+        FastAPI->>FastAPI: Transcode (PCM 24kHz -> µ-law 8kHz)
+        FastAPI->>Twilio: Audio (8kHz µ-law)
+        Twilio->>User: Voice
+    end
 
-### 2.3 Integration Layer (`tools.py`)
-- **Technology**: `pyodbc` (SQL Server)
-- **Responsibility**: Maps abstract intent (e.g., "Is my car ready?") to specific SQL queries.
-- **Security**:
-    - Read-Only connection for most tools.
-    - Sensitive actions (Financial) require explicit "interrupt" approval (modeled in logic).
+    Note over Gemini,WinCar: Tool Execution Loop
+    Gemini->>FastAPI: Tool Call (JSON)
+    FastAPI->>WinCar: SQL Query (via pyodbc)
+    WinCar-->>FastAPI: Result
+    FastAPI->>Gemini: ToolResponse (JSON)
+```
 
-### 2.4 Data Layer (`mock_wincar_db.sql`)
-- **Technology**: MS SQL Server (Mock Schema)
-- **Schema**:
-    - `Communicatie_Relaties`: Customers (CRM)
-    - `Werkplaats_Voertuigen` & `Werkplaats_Werkorders`: Vehicles and repair status.
-    - `Magazijn_Artikelen`: Parts stock and pricing.
-    - `Financieel_Facturen`: Invoicing and payment links.
+### 2.1 Audio Processing (Resampling)
+Direct transcoding is required between telephony standards and AI model standards.
 
----
+**Inbound (Twilio -> Gemini)**
+- **Input**: G.711 µ-law, 8000 Hz, Mono.
+- **Process**: 
+    1. Decode µ-law to Linear PCM (16-bit).
+    2. Upsample from 8000 Hz to 16000 Hz (Gemini requirement).
+- **Target**: Linear PCM, 16000 Hz, 16-bit, Little Endian.
 
-## 3. WinCar Module Mapping
-Based on the **WinCar Informatiepakket 2026** (Official PDF), the system maps specific modules to AI tools as follows:
+**Outbound (Gemini -> Twilio)**
+- **Input**: Linear PCM, 24000 Hz (Gemini default).
+- **Process**:
+    1. Downsample from 24000 Hz to 8000 Hz.
+    2. Encode Linear PCM to G.711 µ-law.
+- **Target**: G.711 µ-law, 8000 Hz.
 
-| GarageAI Tool | WinCar Module (PDF) | Description & Justification |
-| :--- | :--- | :--- |
-| **`identify_customer`** | **COMMUNICATIE (CRM)** | **PDF (Pg 10)**: Describes "Klantbeheer" bundling all data. "Telefonie-integratie" shows who calls. <br> **Mapping**: Tool queries `Communicatie_Relaties` by phone number to identify the caller immediately. |
-| **`check_werkorder_status`** | **WERKPLAATS** | **PDF (Pg 5, 7)**: "Werkplaatsmodule... realtime statusupdates". Mentions "Digitale Werkorder" for tracking progress.<br> **Mapping**: Tool queries `Werkplaats_Werkorders` to report if a car is 'Planned', 'Waiting', or 'Ready'. |
-| **`check_part_stock`** | **MAGAZIJN** | **PDF (Pg 8)**: "Realtime inzicht in de voorraad...".<br> **Mapping**: Tool checks availability and price in `Magazijn_Artikelen` before quoting a customer. |
-| **`generate_payment_link`** | **FINANCIEEL** | **PDF (Pg 9)**: Mentions "WinCar Betaallink" via **Bluem / iDeal**. <br> **Mapping**: Tool mimics this by generating a payment URL for a Work Order. **Critical**: This is a write/sensitive action matching the PDF's description of financial transactions. |
+### 2.2 WebSocket Handshake Flow
+1. **Connection**: Twilio connects to `/ws/stream`.
+2. **Start Event**: Twilio sends a `start` event containing the `streamSid`.
+3. **Gemini Session**: Server initializes a Gemini Session via `BidiGenerateContent`.
+    - **Config**: Sets `response_modalities=["AUDIO"]`, `language="nl-NL"`.
+    - **System Instruction**: Sends the persona and rules.
+    - **Tools**: Sends functionality definitions (Function Declarations).
+4. **Media Events**: server listens for `media` events from Twilio and `server_content` chunks from Gemini.
 
-## 4. Future Roadmap
-- **Human-in-the-Loop**: Implement the `interrupt_before` logic in `graph.py` for the Financial tool to fully satisfy the safety requirement.
-- **Real DB Connection**: Replace mock `pyodbc` string with actual WinCar SQL credentials.
-- **Vapi Integration**: Test full streaming audio loop with Vapi.ai.
+## 3. Data Dictionary & Function Calling Schemas
+The AI interacts with the world via **Function Calling**. These schemas are defined using Pydantic.
+
+### 3.1 Appointment Booking (`BookAppointment`)
+Used when a user explicitly agrees to a date and time for service.
+
+```python
+class BookAppointment(BaseModel):
+    """
+    Books a confirmed appointment in the WinCar workshop schedule.
+    Use this ONLY when the user has explicitly agreed to a proposed time.
+    """
+    customer_phone: str = Field(..., description="The caller's phone number as identified or provided.")
+    license_plate: str = Field(..., description="The vehicle license plate (Kenteken), formatted without dashes if possible.")
+    service_type: str = Field(..., description="Type of service: 'APK', 'Grote Beurt', 'Kleine Beurt', 'Reparatie', or 'Diagnose'.")
+    date_time: str = Field(..., description="ISO 8601 formatted datetime string (YYYY-MM-DDTHH:MM:SS) for the appointment start.")
+    description: str = Field(..., description="Short description of the issue or request (Dutch).")
+```
+
+### 3.2 Customer Identification (`IdentifyCustomer`)
+Used at the start of the call to retrieve context.
+
+```python
+class IdentifyCustomer(BaseModel):
+    """
+    Look up customer details by phone number to personalize the greeting.
+    """
+    phone_number: str = Field(..., description="The incoming caller ID or stated phone number.")
+```
+
+### 3.3 Stock Check (`CheckStock`)
+Used to answer "Do you have this part?" or "How much is X?".
+
+```python
+class CheckStock(BaseModel):
+    """
+    Queries the 'Magazijn' module for part availability and pricing.
+    """
+    part_name: str = Field(..., description="Fuzzy name of the part (e.g., 'remschijven golf 7').")
+    vehicle_model: str = Field(None, description="Optional vehicle context if known.")
+```
+
+## 4. Safety & Security
+- **Read-Only**: `CheckStock`, `IdentifyCustomer` run on a read-only SQL cursor.
+- **Write**: `BookAppointment` writes to `Werkplaats_Werkorders`.
+    - *Constraint*: Must not overwrite existing slots without checking availability (handled by SQL logic).
+- **Interrupts**: If the user interrupts (speaks while AI is talking), the bridge must capture the `interruption` event and send a `clear_buffer` signal to Twilio to stop playback immediately.
+
+## 5. Deployment
+- **Environment**: Dockerized Python 3.11+.
+- **Dependencies**: `fastapi`, `uvicorn`, `websockets`, `google-genai`, `numpy` (for resampling), `twilio`.

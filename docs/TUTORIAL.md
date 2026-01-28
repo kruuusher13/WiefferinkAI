@@ -17,6 +17,7 @@ This specific tutorial guides you through running the GarageAI backend locally, 
     ```bash
     cd /path/to/GarageAI
     ```
+    
 
 2.  **Install Dependencies**:
     ```bash
@@ -123,4 +124,4 @@ We use a Dockerized SQL Server to mimic the real WinCar database.
 -   **Vapi Latency**: If the call drops due to silence, ensure `main.py` is using the StreamingResponse implementation.
 
 
-export GOOGLE_API_KEY="AIzaSyDgQ46mmboKJu-ucGvgkk6lqERgOKiO-YE" && ./start_all.sh
+export GOOGLE_API_KEY="AIzaSyDtT1KNU7gn0gsi2y-6y5Gde9K6tOAzVmA" && ./start_all.sh

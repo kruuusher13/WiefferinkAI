@@ -1,0 +1,346 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>GarageAI v2 - Voice & Database Insight</title>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&family=JetBrains+Mono&display=swap"
+        rel="stylesheet">
+    <style>
+        :root {
+            --bg-dark: #0f172a;
+            --panel-bg: rgba(30, 41, 59, 0.7);
+            --accent-primary: #3b82f6;
+            --accent-secondary: #8b5cf6;
+            --text-main: #f1f5f9;
+            --text-dim: #94a3b8;
+            --border: rgba(255, 255, 255, 0.1);
+        }
+
+        * {
+            box-sizing: border-box;
+            margin: 0;
+            padding: 0;
+        }
+
+        body {
+            font-family: 'Inter', sans-serif;
+            background: var(--bg-dark);
+            background-image:
+                radial-gradient(at 0% 0%, rgba(59, 130, 246, 0.15) 0, transparent 50%),
+                radial-gradient(at 100% 100%, rgba(139, 92, 246, 0.15) 0, transparent 50%);
+            min-height: 100vh;
+            color: var(--text-main);
+            padding: 24px;
+            display: flex;
+            flex-direction: column;
+            gap: 24px;
+        }
+
+        /* Layout Grid */
+        .dashboard-grid {
+            display: grid;
+            grid-template-columns: 320px 1fr 320px;
+            gap: 24px;
+            max-width: 1600px;
+            margin: 0 auto;
+            width: 100%;
+            flex: 1;
+        }
+
+        .panel {
+            background: var(--panel-bg);
+            backdrop-filter: blur(12px);
+            border: 1px solid var(--border);
+            border-radius: 20px;
+            display: flex;
+            flex-direction: column;
+            overflow: hidden;
+            box-shadow: 0 10px 15px -3px rgba(0, 0, 0, 0.1);
+        }
+
+        .panel-header {
+            padding: 16px 20px;
+            border-bottom: 1px solid var(--border);
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+        }
+
+        .panel-header h2 {
+            font-size: 0.875rem;
+            font-weight: 600;
+            text-transform: uppercase;
+            letter-spacing: 0.05em;
+            color: var(--text-dim);
+        }
+
+        /* Center Content (Chat) */
+        .chat-container {
+            flex: 1;
+            display: flex;
+            flex-direction: column;
+        }
+
+        .chat-messages {
+            flex: 1;
+            padding: 20px;
+            overflow-y: auto;
+            display: flex;
+            flex-direction: column;
+            gap: 16px;
+            height: 400px;
+        }
+
+        .message {
+            max-width: 80%;
+            padding: 12px 16px;
+            border-radius: 16px;
+            font-size: 0.9375rem;
+            line-height: 1.5;
+            position: relative;
+        }
+
+        .message.assistant {
+            align-self: flex-start;
+            background: rgba(255, 255, 255, 0.05);
+            border-bottom-left-radius: 4px;
+        }
+
+        .message.user {
+            align-self: flex-end;
+            background: linear-gradient(135deg, var(--accent-primary), var(--accent-secondary));
+            border-bottom-right-radius: 4px;
+        }
+
+        /* Right Panel (DB / Tables) */
+        .data-panel {
+            grid-column: span 3;
+            max-height: 400px;
+        }
+
+        .table-controls {
+            padding: 12px 20px;
+            display: flex;
+            gap: 12px;
+            background: rgba(0, 0, 0, 0.2);
+        }
+
+        .table-btn {
+            background: transparent;
+            border: 1px solid var(--border);
+            color: var(--text-dim);
+            padding: 6px 12px;
+            border-radius: 8px;
+            font-size: 0.75rem;
+            cursor: pointer;
+            transition: all 0.2s;
+        }
+
+        .table-btn.active {
+            background: var(--accent-primary);
+            color: white;
+            border-color: var(--accent-primary);
+        }
+
+        .table-wrapper {
+            flex: 1;
+            overflow: auto;
+            padding: 12px;
+        }
+
+        table {
+            width: 100%;
+            border-collapse: collapse;
+            font-size: 0.8125rem;
+        }
+
+        th {
+            text-align: left;
+            padding: 10px;
+            color: var(--text-dim);
+            border-bottom: 1px solid var(--border);
+            font-weight: 500;
+        }
+
+        td {
+            padding: 10px;
+            border-bottom: 1px solid rgba(255, 255, 255, 0.05);
+        }
+
+        /* Left Panel (Controls & Prompt) */
+        .control-section {
+            padding: 24px;
+            display: flex;
+            flex-direction: column;
+            gap: 20px;
+        }
+
+        .status-dot {
+            width: 8px;
+            height: 8px;
+            border-radius: 50%;
+            background: #64748b;
+        }
+
+        .status-dot.online {
+            background: #10b981;
+            box-shadow: 0 0 10px #10b981;
+        }
+
+        .prompt-area {
+            background: rgba(0, 0, 0, 0.3);
+            border: 1px solid var(--border);
+            border-radius: 12px;
+            padding: 12px;
+            font-family: 'JetBrains Mono', monospace;
+            font-size: 0.75rem;
+            color: var(--accent-primary);
+            width: 100%;
+            height: 150px;
+            resize: none;
+            outline: none;
+        }
+
+        .btn {
+            padding: 12px;
+            border-radius: 10px;
+            border: none;
+            font-weight: 600;
+            cursor: pointer;
+            transition: transform 0.1s;
+        }
+
+        .btn:active {
+            transform: scale(0.98);
+        }
+
+        .btn-blue {
+            background: var(--accent-primary);
+            color: white;
+        }
+
+        /* Typography */
+        .brand {
+            font-size: 1.25rem;
+            font-weight: 700;
+            color: white;
+            margin-bottom: 4px;
+        }
+
+        .tagline {
+            font-size: 0.75rem;
+            color: var(--text-dim);
+        }
+    </style>
+</head>
+
+<body>
+
+    <header
+        style="display: flex; justify-content: space-between; align-items: center; max-width: 1600px; margin: 0 auto; width: 100%; padding: 0 10px;">
+        <div>
+            <div class="brand">GarageAI v2.0 <span
+                    style="font-weight: normal; font-size: 0.8rem; color: var(--accent-primary);">/ Harry</span></div>
+            <div class="tagline">Multimodal System Insights & Voice Interface</div>
+        </div>
+        <div style="display: flex; gap: 12px; align-items: center;">
+            <div id="connectionStatus" class="status-dot"></div>
+            <span id="statusText" style="font-size: 0.75rem; color: var(--text-dim);">SYSTEM OFFLINE</span>
+        </div>
+    </header>
+
+    <div class="dashboard-grid">
+
+        <!-- Left Panel: Controls -->
+        <div class="panel">
+            <div class="panel-header">
+                <h2>System Controls</h2>
+            </div>
+            <div class="control-section">
+                <button id="startBtn" class="btn btn-blue">🎤 Start Conversation</button>
+
+                <div style="display: flex; gap: 8px;">
+                    <button class="table-btn lang-btn active" data-lang="en">English</button>
+                    <button class="table-btn lang-btn" data-lang="nl">Dutch</button>
+                </div>
+
+                <div style="margin-top: 10px;">
+                    <h2
+                        style="font-size: 0.7rem; color: var(--text-dim); margin-bottom: 8px; text-transform: uppercase;">
+                        Prototype Prompt</h2>
+                    <textarea id="promptInput" class="prompt-area"
+                        placeholder="Inject new instructions here...">YOU ARE: Harry, the smart assistant for Garage Wiefferink. Introduce yourself naturally.</textarea>
+                    <button id="updatePromptBtn" class="btn"
+                        style="width: 100%; margin-top: 8px; background: rgba(255,255,255,0.05); color: white; font-size: 0.75rem;">Apply
+                        Instruction</button>
+                </div>
+            </div>
+        </div>
+
+        <!-- Center Panel: Chat -->
+        <div class="panel chat-container">
+            <div class="panel-header">
+                <h2>Terminal / Audio Transcription</h2>
+            </div>
+            <div id="chatMessages" class="chat-messages">
+                <div class="message assistant">System initialized. Click start to connect.</div>
+            </div>
+            <div style="padding: 16px; border-top: 1px solid var(--border); display: flex; gap: 12px;">
+                <input id="chatInput" type="text" placeholder="Type a message..."
+                    style="flex: 1; background: rgba(0,0,0,0.2); border: 1px solid var(--border); border-radius: 10px; padding: 10px; color: white; outline: none;"
+                    disabled>
+                <button id="sendBtn" class="btn btn-blue" style="padding: 0 20px;" disabled>Send</button>
+            </div>
+        </div>
+
+        <!-- Right Panel (Placeholder for stats or similar if needed, or just let chat be wider) -->
+        <div class="panel">
+            <div class="panel-header">
+                <h2>Session Info</h2>
+            </div>
+            <div class="control-section" style="font-size: 0.8rem; color: var(--text-dim);">
+                <div style="display: flex; justify-content: space-between; margin-bottom: 8px;">
+                    <span>Voice Engine:</span>
+                    <span style="color: var(--text-main);">Fenrir (24kHz)</span>
+                </div>
+                <div style="display: flex; justify-content: space-between; margin-bottom: 8px;">
+                    <span>Input Engine:</span>
+                    <span style="color: var(--text-main);">PCM (16kHz)</span>
+                </div>
+                <div style="display: flex; justify-content: space-between;">
+                    <span>Context Thread:</span>
+                    <span style="color: var(--text-main);">local_v2_session</span>
+                </div>
+            </div>
+        </div>
+
+        <!-- Bottom Panel: Database Visualization -->
+        <div class="panel data-panel">
+            <div class="panel-header">
+                <h2>WinCar Database Insights</h2>
+                <div style="font-size: 0.75rem; color: #10b981;">● SYNCED</div>
+            </div>
+            <div class="table-controls">
+                <button class="table-btn db-btn active" data-table="customers">Klanten</button>
+                <button class="table-btn db-btn" data-table="werkorders">Werkorders</button>
+                <button class="table-btn db-btn" data-table="stock">Magazijn Voorraad</button>
+                <button id="refreshDbBtn" class="table-btn" style="margin-left: auto;">🔄 Refresh</button>
+            </div>
+            <div class="table-wrapper">
+                <table id="dataTable">
+                    <thead>
+                        <tr id="tableHead"></tr>
+                    </thead>
+                    <tbody id="tableBody"></tbody>
+                </table>
+            </div>
+        </div>
+
+    </div>
+
+    <script src="/web/static/client.js"></script>
+</body>
+
+</html>
