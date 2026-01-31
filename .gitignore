@@ -3,6 +3,7 @@ __pycache__/
 .DS_Store
 .env
 venv/
+.venv/
 env/
 node_modules/
 server.log
@@ -10,3 +11,5 @@ logs/
 *.bak
 *.debug
 *.prod
+*.pdf
+.claude/plans/

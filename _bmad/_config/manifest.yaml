@@ -1,22 +1,22 @@
-installation:
-  version: 6.0.0-Beta.2
-  installDate: 2026-01-28T11:21:12.104Z
-  lastUpdated: 2026-01-28T11:21:12.104Z
+# BMAD Installation Manifest for GarageAI
+# This file tracks the BMAD configuration
+
+version: "1.0.0"
+project: "GarageAI"
+created: "2026-01-28"
+last_updated: "2026-01-28"
+
+# Installed Modules
 modules:
-  - name: core
-    version: 6.0.0-Beta.2
-    installDate: 2026-01-28T11:21:12.104Z
-    lastUpdated: 2026-01-28T11:21:12.104Z
-    source: built-in
-    npmPackage: null
-    repoUrl: null
-  - name: bmm
-    version: 6.0.0-Beta.2
-    installDate: 2026-01-28T11:21:12.086Z
-    lastUpdated: 2026-01-28T11:21:12.104Z
-    source: built-in
-    npmPackage: null
-    repoUrl: null
-ides:
-  - gemini
-  - antigravity
+  core:
+    version: "1.0.0"
+    description: "Core BMAD functionality"
+  garage:
+    version: "1.0.0"
+    description: "GarageAI-specific agents and workflows"
+
+# Supported Environments
+environments:
+  - claude-code
+  - cursor
+  - vscode

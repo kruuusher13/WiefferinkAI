@@ -65,9 +65,9 @@ async def get_db_table(table_name: str):
         
         # Determine actual table name in DB
         db_table = ""
-        if table_name == "customers": db_table = "Klanten"
+        if table_name == "customers": db_table = "Communicatie_Relaties"
         elif table_name == "werkorders": db_table = "Werkplaats_Werkorders"
-        elif table_name == "stock": db_table = "Magazijn_Voorraad"
+        elif table_name == "stock": db_table = "Magazijn_Artikelen"
         
         cursor.execute(f"SELECT * FROM {db_table}")
         columns = [column[0] for column in cursor.description]

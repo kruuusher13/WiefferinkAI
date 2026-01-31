@@ -47,7 +47,10 @@ from app.tools import (
     check_werkorder_status,
     check_part_stock,
     schedule_appointment,
-    generate_payment_link
+    generate_payment_link,
+    lookup_vehicle_rdw,
+    check_apk_status,
+    get_vehicle_recalls
 )
 
 # Gemini Live API Configuration
@@ -124,6 +127,39 @@ TOOLS_SCHEMA = [
                         "description": {"type": "STRING", "description": "Service description."}
                     },
                     "required": ["date_time", "description"]
+                }
+            },
+            {
+                "name": "lookup_vehicle_rdw",
+                "description": "Look up vehicle info by kenteken (Dutch license plate) from RDW database. Returns make, model, year, fuel type, and APK expiry.",
+                "parameters": {
+                    "type": "OBJECT",
+                    "properties": {
+                        "kenteken": {"type": "STRING", "description": "Dutch license plate (e.g., 'AB-123-CD' or 'AB123CD')."}
+                    },
+                    "required": ["kenteken"]
+                }
+            },
+            {
+                "name": "check_apk_status",
+                "description": "Check APK (Dutch MOT) expiry status for a vehicle. Use to inform customers about upcoming APK requirements.",
+                "parameters": {
+                    "type": "OBJECT",
+                    "properties": {
+                        "kenteken": {"type": "STRING", "description": "Dutch license plate (e.g., 'AB-123-CD' or 'AB123CD')."}
+                    },
+                    "required": ["kenteken"]
+                }
+            },
+            {
+                "name": "get_vehicle_recalls",
+                "description": "Check for active manufacturer recalls (terugroepacties) for a vehicle. Use to inform customers about safety recalls.",
+                "parameters": {
+                    "type": "OBJECT",
+                    "properties": {
+                        "kenteken": {"type": "STRING", "description": "Dutch license plate (e.g., 'AB-123-CD' or 'AB123CD')."}
+                    },
+                    "required": ["kenteken"]
                 }
             }
         ]
@@ -243,6 +279,12 @@ async def websocket_endpoint(websocket: WebSocket):
                                         result = check_part_stock.invoke(f_args)
                                     elif f_name == "schedule_appointment":
                                         result = schedule_appointment.invoke(f_args)
+                                    elif f_name == "lookup_vehicle_rdw":
+                                        result = lookup_vehicle_rdw.invoke(f_args)
+                                    elif f_name == "check_apk_status":
+                                        result = check_apk_status.invoke(f_args)
+                                    elif f_name == "get_vehicle_recalls":
+                                        result = get_vehicle_recalls.invoke(f_args)
                                     else:
                                         result = f"Error: Unknown tool {f_name}"
                                 except Exception as e:
@@ -474,7 +516,7 @@ async def websocket_web_endpoint(websocket: WebSocket):
                                     "text": transcript_text
                                 }))
 
-                        # Tool Handling (Same logic)
+                        # Tool Handling (Same logic) - Now with UI notifications
                         if "toolCall" in response:
                             tool_calls = response["toolCall"]["functionCalls"]
                             tool_responses = []
@@ -482,14 +524,33 @@ async def websocket_web_endpoint(websocket: WebSocket):
                                 f_name = call["name"]
                                 f_args = call["args"]
                                 call_id = call["id"]
+
+                                # Notify frontend about tool call
+                                await websocket.send_text(json.dumps({
+                                    "type": "tool_call",
+                                    "name": f_name,
+                                    "args": f_args
+                                }))
+
                                 try:
                                     if f_name == "identify_customer": result = identify_customer.invoke(f_args)
                                     elif f_name == "check_werkorder_status": result = check_werkorder_status.invoke(f_args)
                                     elif f_name == "check_part_stock": result = check_part_stock.invoke(f_args)
                                     elif f_name == "schedule_appointment": result = schedule_appointment.invoke(f_args)
+                                    elif f_name == "lookup_vehicle_rdw": result = lookup_vehicle_rdw.invoke(f_args)
+                                    elif f_name == "check_apk_status": result = check_apk_status.invoke(f_args)
+                                    elif f_name == "get_vehicle_recalls": result = get_vehicle_recalls.invoke(f_args)
                                     else: result = f"Error: Unknown tool {f_name}"
                                 except Exception as e:
                                     result = f"Tool Execution Error: {e}"
+
+                                # Notify frontend about tool result
+                                await websocket.send_text(json.dumps({
+                                    "type": "tool_result",
+                                    "name": f_name,
+                                    "result": str(result)[:200]  # Truncate for UI
+                                }))
+
                                 tool_responses.append({"id": call_id, "name": f_name, "response": {"result": result}})
 
                             await gemini_ws.send(json.dumps({"toolResponse": {"functionResponses": tool_responses}}))

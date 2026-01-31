@@ -4,18 +4,41 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>GarageAI v2 - Voice & Database Insight</title>
-    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&family=JetBrains+Mono&display=swap"
-        rel="stylesheet">
+    <title>GarageAI - Executive Command Center</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Geist+Mono:wght@400;500;600&family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
     <style>
+        /* ============================================
+           CARBON OBSIDIAN THEME
+           TradingView Minimalist / Executive Command
+           ============================================ */
+
         :root {
-            --bg-dark: #0f172a;
-            --panel-bg: rgba(30, 41, 59, 0.7);
-            --accent-primary: #3b82f6;
-            --accent-secondary: #8b5cf6;
-            --text-main: #f1f5f9;
-            --text-dim: #94a3b8;
-            --border: rgba(255, 255, 255, 0.1);
+            /* Carbon Obsidian Palette */
+            --bg-obsidian: #09090b;
+            --surface-card: #18181b;
+            --surface-elevated: #1f1f23;
+            --border-subtle: #27272a;
+            --border-accent: #3f3f46;
+
+            /* Accent Colors */
+            --accent-sapphire: #2962ff;
+            --accent-sapphire-glow: rgba(41, 98, 255, 0.4);
+            --accent-amber: #ffb100;
+            --accent-amber-glow: rgba(255, 177, 0, 0.4);
+            --accent-emerald: #10b981;
+            --accent-rose: #f43f5e;
+
+            /* Typography */
+            --text-primary: #fafafa;
+            --text-secondary: #a1a1aa;
+            --text-muted: #71717a;
+
+            /* Radii - Sharp precision */
+            --radius-sm: 4px;
+            --radius-md: 6px;
+            --radius-lg: 8px;
         }
 
         * {
@@ -25,320 +48,814 @@
         }
 
         body {
-            font-family: 'Inter', sans-serif;
-            background: var(--bg-dark);
-            background-image:
-                radial-gradient(at 0% 0%, rgba(59, 130, 246, 0.15) 0, transparent 50%),
-                radial-gradient(at 100% 100%, rgba(139, 92, 246, 0.15) 0, transparent 50%);
+            font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
+            background: var(--bg-obsidian);
             min-height: 100vh;
-            color: var(--text-main);
-            padding: 24px;
-            display: flex;
-            flex-direction: column;
-            gap: 24px;
+            color: var(--text-primary);
+            overflow-x: hidden;
         }
 
-        /* Layout Grid */
-        .dashboard-grid {
+        /* ============================================
+           LAYOUT STRUCTURE
+           ============================================ */
+
+        .app-container {
             display: grid;
-            grid-template-columns: 320px 1fr 320px;
-            gap: 24px;
-            max-width: 1600px;
-            margin: 0 auto;
-            width: 100%;
-            flex: 1;
+            grid-template-rows: 56px 1fr;
+            min-height: 100vh;
         }
 
-        .panel {
-            background: var(--panel-bg);
-            backdrop-filter: blur(12px);
-            border: 1px solid var(--border);
-            border-radius: 20px;
-            display: flex;
-            flex-direction: column;
-            overflow: hidden;
-            box-shadow: 0 10px 15px -3px rgba(0, 0, 0, 0.1);
-        }
-
-        .panel-header {
-            padding: 16px 20px;
-            border-bottom: 1px solid var(--border);
+        /* Header Bar */
+        .header-bar {
+            background: var(--surface-card);
+            border-bottom: 1px solid var(--border-subtle);
             display: flex;
             align-items: center;
             justify-content: space-between;
+            padding: 0 24px;
+            position: sticky;
+            top: 0;
+            z-index: 100;
         }
 
-        .panel-header h2 {
-            font-size: 0.875rem;
-            font-weight: 600;
-            text-transform: uppercase;
-            letter-spacing: 0.05em;
-            color: var(--text-dim);
-        }
-
-        /* Center Content (Chat) */
-        .chat-container {
-            flex: 1;
+        .brand {
             display: flex;
-            flex-direction: column;
-        }
-
-        .chat-messages {
-            flex: 1;
-            padding: 20px;
-            overflow-y: auto;
-            display: flex;
-            flex-direction: column;
-            gap: 16px;
-            height: 400px;
-        }
-
-        .message {
-            max-width: 80%;
-            padding: 12px 16px;
-            border-radius: 16px;
-            font-size: 0.9375rem;
-            line-height: 1.5;
-            position: relative;
-        }
-
-        .message.assistant {
-            align-self: flex-start;
-            background: rgba(255, 255, 255, 0.05);
-            border-bottom-left-radius: 4px;
-        }
-
-        .message.user {
-            align-self: flex-end;
-            background: linear-gradient(135deg, var(--accent-primary), var(--accent-secondary));
-            border-bottom-right-radius: 4px;
-        }
-
-        /* Right Panel (DB / Tables) */
-        .data-panel {
-            grid-column: span 3;
-            max-height: 400px;
-        }
-
-        .table-controls {
-            padding: 12px 20px;
-            display: flex;
+            align-items: center;
             gap: 12px;
-            background: rgba(0, 0, 0, 0.2);
         }
 
-        .table-btn {
-            background: transparent;
-            border: 1px solid var(--border);
-            color: var(--text-dim);
-            padding: 6px 12px;
-            border-radius: 8px;
-            font-size: 0.75rem;
-            cursor: pointer;
-            transition: all 0.2s;
-        }
-
-        .table-btn.active {
-            background: var(--accent-primary);
-            color: white;
-            border-color: var(--accent-primary);
-        }
-
-        .table-wrapper {
-            flex: 1;
-            overflow: auto;
-            padding: 12px;
-        }
-
-        table {
-            width: 100%;
-            border-collapse: collapse;
-            font-size: 0.8125rem;
-        }
-
-        th {
-            text-align: left;
-            padding: 10px;
-            color: var(--text-dim);
-            border-bottom: 1px solid var(--border);
-            font-weight: 500;
-        }
-
-        td {
-            padding: 10px;
-            border-bottom: 1px solid rgba(255, 255, 255, 0.05);
-        }
-
-        /* Left Panel (Controls & Prompt) */
-        .control-section {
-            padding: 24px;
+        .brand-logo {
+            width: 32px;
+            height: 32px;
+            background: linear-gradient(135deg, var(--accent-sapphire), var(--accent-amber));
+            border-radius: var(--radius-sm);
             display: flex;
-            flex-direction: column;
-            gap: 20px;
+            align-items: center;
+            justify-content: center;
+            font-weight: 700;
+            font-size: 14px;
+        }
+
+        .brand-text {
+            font-weight: 600;
+            font-size: 15px;
+            letter-spacing: -0.02em;
+        }
+
+        .brand-text span {
+            color: var(--text-muted);
+            font-weight: 400;
+            margin-left: 8px;
+        }
+
+        .header-status {
+            display: flex;
+            align-items: center;
+            gap: 16px;
+        }
+
+        .status-indicator {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            font-size: 12px;
+            font-family: 'Geist Mono', monospace;
+            color: var(--text-muted);
         }
 
         .status-dot {
             width: 8px;
             height: 8px;
             border-radius: 50%;
-            background: #64748b;
+            background: var(--text-muted);
+            transition: all 0.3s ease;
         }
 
         .status-dot.online {
-            background: #10b981;
-            box-shadow: 0 0 10px #10b981;
+            background: var(--accent-emerald);
+            box-shadow: 0 0 12px var(--accent-emerald);
         }
 
-        .prompt-area {
-            background: rgba(0, 0, 0, 0.3);
-            border: 1px solid var(--border);
-            border-radius: 12px;
-            padding: 12px;
-            font-family: 'JetBrains Mono', monospace;
-            font-size: 0.75rem;
-            color: var(--accent-primary);
+        .status-dot.thinking {
+            background: var(--accent-amber);
+            box-shadow: 0 0 12px var(--accent-amber);
+            animation: pulse-amber 1.5s infinite;
+        }
+
+        @keyframes pulse-amber {
+            0%, 100% { opacity: 1; }
+            50% { opacity: 0.5; }
+        }
+
+        /* Main Dashboard Grid */
+        .dashboard {
+            display: grid;
+            grid-template-columns: 1fr 400px;
+            grid-template-rows: 1fr auto;
+            gap: 1px;
+            background: var(--border-subtle);
+            flex: 1;
+        }
+
+        /* ============================================
+           THE PULSE - CENTER STAGE
+           ============================================ */
+
+        .interaction-console {
+            background: var(--bg-obsidian);
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            position: relative;
+            padding: 48px;
+        }
+
+        .pulse-container {
+            position: relative;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+        }
+
+        .pulse-ring {
+            position: absolute;
+            width: 280px;
+            height: 280px;
+            border: 1px solid var(--border-subtle);
+            border-radius: 50%;
+            opacity: 0.3;
+        }
+
+        .pulse-ring:nth-child(2) {
+            width: 340px;
+            height: 340px;
+            opacity: 0.2;
+        }
+
+        .pulse-ring:nth-child(3) {
+            width: 400px;
+            height: 400px;
+            opacity: 0.1;
+        }
+
+        .pulse-core {
+            width: 200px;
+            height: 200px;
+            border-radius: 50%;
+            background: var(--surface-card);
+            border: 2px solid var(--border-accent);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            cursor: pointer;
+            transition: all 0.4s ease;
+            position: relative;
+            z-index: 10;
+        }
+
+        .pulse-core::before {
+            content: '';
+            position: absolute;
+            inset: -4px;
+            border-radius: 50%;
+            background: transparent;
+            transition: all 0.4s ease;
+        }
+
+        .pulse-core.listening {
+            border-color: var(--accent-sapphire);
+            box-shadow: 0 0 60px var(--accent-sapphire-glow);
+        }
+
+        .pulse-core.listening::before {
+            background: var(--accent-sapphire-glow);
+            animation: ripple 2s infinite;
+        }
+
+        .pulse-core.thinking {
+            border-color: var(--accent-amber);
+            box-shadow: 0 0 60px var(--accent-amber-glow);
+        }
+
+        .pulse-core.thinking::before {
+            background: var(--accent-amber-glow);
+            animation: ripple 1s infinite;
+        }
+
+        @keyframes ripple {
+            0% { transform: scale(1); opacity: 0.4; }
+            100% { transform: scale(1.5); opacity: 0; }
+        }
+
+        .pulse-icon {
+            font-size: 48px;
+            color: var(--text-muted);
+            transition: all 0.3s ease;
+        }
+
+        .pulse-core.listening .pulse-icon,
+        .pulse-core.thinking .pulse-icon {
+            color: var(--text-primary);
+        }
+
+        .pulse-label {
+            position: absolute;
+            bottom: -60px;
+            font-family: 'Geist Mono', monospace;
+            font-size: 12px;
+            color: var(--text-muted);
+            text-transform: uppercase;
+            letter-spacing: 0.1em;
+        }
+
+        /* Audio Visualizer Bars */
+        .visualizer {
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            gap: 4px;
+            height: 60px;
+        }
+
+        .visualizer-bar {
+            width: 4px;
+            background: var(--accent-sapphire);
+            border-radius: 2px;
+            transition: height 0.1s ease;
+        }
+
+        /* Command Bar */
+        .command-bar {
+            position: absolute;
+            bottom: 32px;
+            left: 50%;
+            transform: translateX(-50%);
+            width: 600px;
+            max-width: calc(100% - 48px);
+        }
+
+        .command-input-wrapper {
+            display: flex;
+            align-items: center;
+            background: var(--surface-card);
+            border: 1px solid var(--border-subtle);
+            border-radius: var(--radius-md);
+            padding: 0 16px;
+            transition: border-color 0.2s ease;
+        }
+
+        .command-input-wrapper:focus-within {
+            border-color: var(--accent-sapphire);
+        }
+
+        .command-prefix {
+            font-family: 'Geist Mono', monospace;
+            font-size: 13px;
+            color: var(--accent-sapphire);
+            margin-right: 8px;
+        }
+
+        .command-input {
+            flex: 1;
+            background: transparent;
+            border: none;
+            outline: none;
+            color: var(--text-primary);
+            font-family: 'Inter', sans-serif;
+            font-size: 14px;
+            padding: 14px 0;
+        }
+
+        .command-input::placeholder {
+            color: var(--text-muted);
+        }
+
+        .command-send {
+            background: var(--accent-sapphire);
+            border: none;
+            color: white;
+            padding: 6px 12px;
+            border-radius: var(--radius-sm);
+            font-size: 12px;
+            font-weight: 500;
+            cursor: pointer;
+            transition: opacity 0.2s ease;
+        }
+
+        .command-send:hover {
+            opacity: 0.9;
+        }
+
+        .command-send:disabled {
+            opacity: 0.5;
+            cursor: not-allowed;
+        }
+
+        /* ============================================
+           THINKING WIDGET - THE BRAIN
+           ============================================ */
+
+        .thinking-panel {
+            background: var(--surface-card);
+            display: flex;
+            flex-direction: column;
+            border-left: 1px solid var(--border-subtle);
+        }
+
+        .panel-header {
+            padding: 16px 20px;
+            border-bottom: 1px solid var(--border-subtle);
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+        }
+
+        .panel-title {
+            font-size: 11px;
+            font-weight: 600;
+            text-transform: uppercase;
+            letter-spacing: 0.08em;
+            color: var(--text-muted);
+        }
+
+        .panel-badge {
+            font-family: 'Geist Mono', monospace;
+            font-size: 10px;
+            padding: 3px 8px;
+            border-radius: var(--radius-sm);
+            background: var(--surface-elevated);
+            color: var(--accent-emerald);
+        }
+
+        .thinking-log {
+            flex: 1;
+            overflow-y: auto;
+            padding: 16px;
+            font-family: 'Geist Mono', monospace;
+            font-size: 12px;
+            line-height: 1.7;
+        }
+
+        .log-entry {
+            display: flex;
+            gap: 12px;
+            margin-bottom: 8px;
+            opacity: 0;
+            animation: fadeIn 0.3s ease forwards;
+        }
+
+        @keyframes fadeIn {
+            to { opacity: 1; }
+        }
+
+        .log-time {
+            color: var(--text-muted);
+            flex-shrink: 0;
+        }
+
+        .log-content {
+            color: var(--text-secondary);
+        }
+
+        .log-content.tool {
+            color: var(--accent-amber);
+        }
+
+        .log-content.result {
+            color: var(--accent-emerald);
+        }
+
+        .log-content.error {
+            color: var(--accent-rose);
+        }
+
+        .log-content.user {
+            color: var(--accent-sapphire);
+        }
+
+        /* Transcript Section */
+        .transcript-section {
+            border-top: 1px solid var(--border-subtle);
+            max-height: 300px;
+            overflow-y: auto;
+        }
+
+        .transcript-header {
+            padding: 12px 20px;
+            font-size: 11px;
+            font-weight: 600;
+            text-transform: uppercase;
+            letter-spacing: 0.08em;
+            color: var(--text-muted);
+            background: var(--surface-elevated);
+            position: sticky;
+            top: 0;
+        }
+
+        .transcript-messages {
+            padding: 16px;
+        }
+
+        .transcript-msg {
+            margin-bottom: 12px;
+            padding: 10px 14px;
+            border-radius: var(--radius-md);
+            font-size: 13px;
+            line-height: 1.5;
+        }
+
+        .transcript-msg.user {
+            background: var(--accent-sapphire);
+            color: white;
+            margin-left: 40px;
+        }
+
+        .transcript-msg.assistant {
+            background: var(--surface-elevated);
+            color: var(--text-primary);
+            margin-right: 40px;
+        }
+
+        /* ============================================
+           DATABASE PANEL
+           ============================================ */
+
+        .data-panel {
+            grid-column: span 2;
+            background: var(--surface-card);
+            border-top: 1px solid var(--border-subtle);
+            display: flex;
+            flex-direction: column;
+            max-height: 320px;
+        }
+
+        .data-controls {
+            padding: 12px 20px;
+            display: flex;
+            gap: 8px;
+            align-items: center;
+            border-bottom: 1px solid var(--border-subtle);
+            background: var(--surface-elevated);
+        }
+
+        .data-tab {
+            font-family: 'Geist Mono', monospace;
+            font-size: 11px;
+            padding: 6px 12px;
+            border-radius: var(--radius-sm);
+            border: 1px solid transparent;
+            background: transparent;
+            color: var(--text-muted);
+            cursor: pointer;
+            transition: all 0.2s ease;
+        }
+
+        .data-tab:hover {
+            color: var(--text-secondary);
+        }
+
+        .data-tab.active {
+            background: var(--accent-sapphire);
+            color: white;
+        }
+
+        .data-refresh {
+            margin-left: auto;
+            font-size: 12px;
+            padding: 6px 10px;
+            border-radius: var(--radius-sm);
+            border: 1px solid var(--border-subtle);
+            background: transparent;
+            color: var(--text-muted);
+            cursor: pointer;
+            transition: all 0.2s ease;
+        }
+
+        .data-refresh:hover {
+            border-color: var(--text-muted);
+            color: var(--text-secondary);
+        }
+
+        .data-table-wrapper {
+            flex: 1;
+            overflow: auto;
+            padding: 0;
+        }
+
+        .data-table {
             width: 100%;
-            height: 150px;
+            border-collapse: collapse;
+            font-size: 12px;
+        }
+
+        .data-table th {
+            text-align: left;
+            padding: 12px 16px;
+            color: var(--text-muted);
+            font-weight: 500;
+            text-transform: uppercase;
+            font-size: 10px;
+            letter-spacing: 0.05em;
+            background: var(--surface-elevated);
+            border-bottom: 1px solid var(--border-subtle);
+            position: sticky;
+            top: 0;
+        }
+
+        .data-table td {
+            padding: 10px 16px;
+            border-bottom: 1px solid var(--border-subtle);
+            color: var(--text-secondary);
+            font-family: 'Geist Mono', monospace;
+        }
+
+        .data-table tbody tr:hover {
+            background: var(--surface-elevated);
+        }
+
+        /* ============================================
+           CONTROL SIDEBAR (collapsible)
+           ============================================ */
+
+        .controls-toggle {
+            position: fixed;
+            left: 16px;
+            top: 72px;
+            width: 36px;
+            height: 36px;
+            background: var(--surface-card);
+            border: 1px solid var(--border-subtle);
+            border-radius: var(--radius-sm);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            cursor: pointer;
+            color: var(--text-muted);
+            font-size: 14px;
+            z-index: 50;
+            transition: all 0.2s ease;
+        }
+
+        .controls-toggle:hover {
+            border-color: var(--text-muted);
+            color: var(--text-secondary);
+        }
+
+        .controls-sidebar {
+            position: fixed;
+            left: 0;
+            top: 56px;
+            bottom: 0;
+            width: 300px;
+            background: var(--surface-card);
+            border-right: 1px solid var(--border-subtle);
+            transform: translateX(-100%);
+            transition: transform 0.3s ease;
+            z-index: 40;
+            display: flex;
+            flex-direction: column;
+        }
+
+        .controls-sidebar.open {
+            transform: translateX(0);
+        }
+
+        .controls-section {
+            padding: 20px;
+            border-bottom: 1px solid var(--border-subtle);
+        }
+
+        .controls-section-title {
+            font-size: 10px;
+            font-weight: 600;
+            text-transform: uppercase;
+            letter-spacing: 0.08em;
+            color: var(--text-muted);
+            margin-bottom: 12px;
+        }
+
+        .language-toggle {
+            display: flex;
+            gap: 8px;
+        }
+
+        .lang-btn {
+            flex: 1;
+            padding: 10px;
+            border: 1px solid var(--border-subtle);
+            background: transparent;
+            color: var(--text-muted);
+            font-size: 12px;
+            border-radius: var(--radius-sm);
+            cursor: pointer;
+            transition: all 0.2s ease;
+        }
+
+        .lang-btn.active {
+            background: var(--accent-sapphire);
+            border-color: var(--accent-sapphire);
+            color: white;
+        }
+
+        .prompt-textarea {
+            width: 100%;
+            height: 200px;
+            background: var(--bg-obsidian);
+            border: 1px solid var(--border-subtle);
+            border-radius: var(--radius-sm);
+            padding: 12px;
+            font-family: 'Geist Mono', monospace;
+            font-size: 11px;
+            color: var(--accent-sapphire);
             resize: none;
             outline: none;
+            line-height: 1.6;
         }
 
-        .btn {
-            padding: 12px;
-            border-radius: 10px;
-            border: none;
-            font-weight: 600;
+        .prompt-textarea:focus {
+            border-color: var(--accent-sapphire);
+        }
+
+        .apply-btn {
+            width: 100%;
+            margin-top: 12px;
+            padding: 10px;
+            background: var(--surface-elevated);
+            border: 1px solid var(--border-subtle);
+            border-radius: var(--radius-sm);
+            color: var(--text-secondary);
+            font-size: 12px;
             cursor: pointer;
-            transition: transform 0.1s;
+            transition: all 0.2s ease;
         }
 
-        .btn:active {
-            transform: scale(0.98);
+        .apply-btn:hover {
+            background: var(--border-subtle);
+            color: var(--text-primary);
         }
 
-        .btn-blue {
-            background: var(--accent-primary);
-            color: white;
+        /* Session Info */
+        .session-info {
+            padding: 20px;
+            font-size: 11px;
+            color: var(--text-muted);
         }
 
-        /* Typography */
-        .brand {
-            font-size: 1.25rem;
-            font-weight: 700;
-            color: white;
-            margin-bottom: 4px;
+        .session-row {
+            display: flex;
+            justify-content: space-between;
+            margin-bottom: 8px;
         }
 
-        .tagline {
-            font-size: 0.75rem;
-            color: var(--text-dim);
+        .session-value {
+            color: var(--text-secondary);
+            font-family: 'Geist Mono', monospace;
+        }
+
+        /* Scrollbar Styling */
+        ::-webkit-scrollbar {
+            width: 6px;
+            height: 6px;
+        }
+
+        ::-webkit-scrollbar-track {
+            background: transparent;
+        }
+
+        ::-webkit-scrollbar-thumb {
+            background: var(--border-accent);
+            border-radius: 3px;
+        }
+
+        ::-webkit-scrollbar-thumb:hover {
+            background: var(--text-muted);
         }
     </style>
 </head>
 
 <body>
-
-    <header
-        style="display: flex; justify-content: space-between; align-items: center; max-width: 1600px; margin: 0 auto; width: 100%; padding: 0 10px;">
-        <div>
-            <div class="brand">GarageAI v2.0 <span
-                    style="font-weight: normal; font-size: 0.8rem; color: var(--accent-primary);">/ Harry</span></div>
-            <div class="tagline">Multimodal System Insights & Voice Interface</div>
-        </div>
-        <div style="display: flex; gap: 12px; align-items: center;">
-            <div id="connectionStatus" class="status-dot"></div>
-            <span id="statusText" style="font-size: 0.75rem; color: var(--text-dim);">SYSTEM OFFLINE</span>
-        </div>
-    </header>
-
-    <div class="dashboard-grid">
-
-        <!-- Left Panel: Controls -->
-        <div class="panel">
-            <div class="panel-header">
-                <h2>System Controls</h2>
+    <div class="app-container">
+        <!-- Header Bar -->
+        <header class="header-bar">
+            <div class="brand">
+                <div class="brand-logo">G</div>
+                <div class="brand-text">GarageAI<span>Executive Command</span></div>
             </div>
-            <div class="control-section">
-                <button id="startBtn" class="btn btn-blue">🎤 Start Conversation</button>
-
-                <div style="display: flex; gap: 8px;">
-                    <button class="table-btn lang-btn active" data-lang="en">English</button>
-                    <button class="table-btn lang-btn" data-lang="nl">Dutch</button>
-                </div>
-
-                <div style="margin-top: 10px;">
-                    <h2
-                        style="font-size: 0.7rem; color: var(--text-dim); margin-bottom: 8px; text-transform: uppercase;">
-                        Prototype Prompt</h2>
-                    <textarea id="promptInput" class="prompt-area"
-                        placeholder="Inject new instructions here...">YOU ARE: Harry, the smart assistant for Garage Wiefferink. Introduce yourself naturally.</textarea>
-                    <button id="updatePromptBtn" class="btn"
-                        style="width: 100%; margin-top: 8px; background: rgba(255,255,255,0.05); color: white; font-size: 0.75rem;">Apply
-                        Instruction</button>
+            <div class="header-status">
+                <div class="status-indicator">
+                    <div id="statusDot" class="status-dot"></div>
+                    <span id="statusText">OFFLINE</span>
                 </div>
             </div>
-        </div>
+        </header>
 
-        <!-- Center Panel: Chat -->
-        <div class="panel chat-container">
-            <div class="panel-header">
-                <h2>Terminal / Audio Transcription</h2>
-            </div>
-            <div id="chatMessages" class="chat-messages">
-                <div class="message assistant">System initialized. Click start to connect.</div>
-            </div>
-            <div style="padding: 16px; border-top: 1px solid var(--border); display: flex; gap: 12px;">
-                <input id="chatInput" type="text" placeholder="Type a message..."
-                    style="flex: 1; background: rgba(0,0,0,0.2); border: 1px solid var(--border); border-radius: 10px; padding: 10px; color: white; outline: none;"
-                    disabled>
-                <button id="sendBtn" class="btn btn-blue" style="padding: 0 20px;" disabled>Send</button>
-            </div>
-        </div>
+        <!-- Main Dashboard -->
+        <div class="dashboard">
+            <!-- Center: The Pulse -->
+            <div class="interaction-console">
+                <div class="pulse-container">
+                    <div class="pulse-ring"></div>
+                    <div class="pulse-ring"></div>
+                    <div class="pulse-ring"></div>
+                    <div id="pulseCore" class="pulse-core">
+                        <div class="visualizer" id="visualizer" style="display: none;">
+                            <div class="visualizer-bar" style="height: 20px;"></div>
+                            <div class="visualizer-bar" style="height: 35px;"></div>
+                            <div class="visualizer-bar" style="height: 25px;"></div>
+                            <div class="visualizer-bar" style="height: 40px;"></div>
+                            <div class="visualizer-bar" style="height: 30px;"></div>
+                            <div class="visualizer-bar" style="height: 45px;"></div>
+                            <div class="visualizer-bar" style="height: 28px;"></div>
+                        </div>
+                        <span id="pulseIcon" class="pulse-icon">&#9711;</span>
+                    </div>
+                    <div id="pulseLabel" class="pulse-label">Click to Connect</div>
+                </div>
 
-        <!-- Right Panel (Placeholder for stats or similar if needed, or just let chat be wider) -->
-        <div class="panel">
-            <div class="panel-header">
-                <h2>Session Info</h2>
-            </div>
-            <div class="control-section" style="font-size: 0.8rem; color: var(--text-dim);">
-                <div style="display: flex; justify-content: space-between; margin-bottom: 8px;">
-                    <span>Voice Engine:</span>
-                    <span style="color: var(--text-main);">Fenrir (24kHz)</span>
-                </div>
-                <div style="display: flex; justify-content: space-between; margin-bottom: 8px;">
-                    <span>Input Engine:</span>
-                    <span style="color: var(--text-main);">PCM (16kHz)</span>
-                </div>
-                <div style="display: flex; justify-content: space-between;">
-                    <span>Context Thread:</span>
-                    <span style="color: var(--text-main);">local_v2_session</span>
+                <!-- Command Bar -->
+                <div class="command-bar">
+                    <div class="command-input-wrapper">
+                        <span class="command-prefix">&gt;</span>
+                        <input type="text" id="commandInput" class="command-input" placeholder="Type a message or /persona [prompt]..." disabled>
+                        <button id="sendBtn" class="command-send" disabled>Send</button>
+                    </div>
                 </div>
             </div>
-        </div>
 
-        <!-- Bottom Panel: Database Visualization -->
-        <div class="panel data-panel">
-            <div class="panel-header">
-                <h2>WinCar Database Insights</h2>
-                <div style="font-size: 0.75rem; color: #10b981;">● SYNCED</div>
+            <!-- Right: Thinking Panel -->
+            <div class="thinking-panel">
+                <div class="panel-header">
+                    <span class="panel-title">Harry's Brain</span>
+                    <span id="thinkingBadge" class="panel-badge">IDLE</span>
+                </div>
+                <div id="thinkingLog" class="thinking-log">
+                    <div class="log-entry">
+                        <span class="log-time">--:--:--</span>
+                        <span class="log-content">Awaiting connection...</span>
+                    </div>
+                </div>
+                <div class="transcript-section">
+                    <div class="transcript-header">Conversation</div>
+                    <div id="transcriptMessages" class="transcript-messages">
+                        <!-- Messages appear here -->
+                    </div>
+                </div>
             </div>
-            <div class="table-controls">
-                <button class="table-btn db-btn active" data-table="customers">Klanten</button>
-                <button class="table-btn db-btn" data-table="werkorders">Werkorders</button>
-                <button class="table-btn db-btn" data-table="stock">Magazijn Voorraad</button>
-                <button id="refreshDbBtn" class="table-btn" style="margin-left: auto;">🔄 Refresh</button>
-            </div>
-            <div class="table-wrapper">
-                <table id="dataTable">
-                    <thead>
-                        <tr id="tableHead"></tr>
-                    </thead>
-                    <tbody id="tableBody"></tbody>
-                </table>
+
+            <!-- Bottom: Database Panel -->
+            <div class="data-panel">
+                <div class="data-controls">
+                    <button class="data-tab active" data-table="customers">Klanten</button>
+                    <button class="data-tab" data-table="werkorders">Werkorders</button>
+                    <button class="data-tab" data-table="stock">Magazijn</button>
+                    <button id="refreshDb" class="data-refresh">Refresh</button>
+                </div>
+                <div class="data-table-wrapper">
+                    <table class="data-table">
+                        <thead>
+                            <tr id="tableHead"></tr>
+                        </thead>
+                        <tbody id="tableBody"></tbody>
+                    </table>
+                </div>
             </div>
         </div>
-
     </div>
+
+    <!-- Controls Sidebar Toggle -->
+    <button id="controlsToggle" class="controls-toggle">&#9776;</button>
+
+    <!-- Controls Sidebar -->
+    <aside id="controlsSidebar" class="controls-sidebar">
+        <div class="controls-section">
+            <div class="controls-section-title">Language</div>
+            <div class="language-toggle">
+                <button class="lang-btn active" data-lang="en">English</button>
+                <button class="lang-btn" data-lang="nl">Dutch</button>
+            </div>
+        </div>
+        <div class="controls-section">
+            <div class="controls-section-title">Prompt Injection</div>
+            <textarea id="promptInput" class="prompt-textarea" placeholder="Inject custom instructions...">YOU ARE: Harry, the smart assistant for Garage Wiefferink. Be professional and helpful.</textarea>
+            <button id="applyPrompt" class="apply-btn">Apply Instruction</button>
+        </div>
+        <div class="session-info">
+            <div class="controls-section-title">Session</div>
+            <div class="session-row">
+                <span>Voice Engine</span>
+                <span class="session-value">Fenrir (24kHz)</span>
+            </div>
+            <div class="session-row">
+                <span>Input</span>
+                <span class="session-value">PCM 16kHz</span>
+            </div>
+            <div class="session-row">
+                <span>Model</span>
+                <span class="session-value">Gemini 2.5 Flash</span>
+            </div>
+        </div>
+    </aside>
 
     <script src="/web/static/client.js"></script>
 </body>
