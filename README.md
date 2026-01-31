@@ -25,10 +25,16 @@ pip install -r requirements.txt
 # 3. Configure environment
 cp .env.example .env  # Then add your GOOGLE_API_KEY
 
-# 4. Start server (This will automatically initialize the DB)
+# 4. Start Database (SQL Server)
+docker-compose up -d
+
+# 5. Start server (This will automatically initialize the DB schema)
 python -m uvicorn bridge.api:app --port 8000 --reload
 
-# 5. Open Dashboard
+#kill old processes (if server does'nt start)
+lsof -i :8000 -t | xargs kill -9 2>/dev/null || true
+
+# 6. Open Dashboard
 open http://localhost:8000/web/index.html
 ```
 

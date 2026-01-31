@@ -27,7 +27,7 @@ langchain-core
 langchain-community
 
 # Search (for web_search tool)
-duckduckgo-search
+ddgs
 
 # Database
 pyodbc

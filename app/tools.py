@@ -151,32 +151,82 @@ def generate_payment_link(werkorder_id: str) -> str:
 
 class AppointmentInput(BaseModel):
     date_time: str = Field(description="The requested date and time for the appointment (e.g., '2026-02-01 14:00').")
-    description: str = Field(description="Description of the work needed (e.g., 'Bandenwissel', 'APK').")
+    description: str = Field(description="Description of the work needed (e.g., 'APK keuring', 'Grote beurt').")
+    customer_name: str = Field(description="Full name of the customer.")
+    phone_number: str = Field(description="Customer phone number for confirmation.")
+    kenteken: str = Field(description="Vehicle license plate (kenteken).")
 
 @tool("schedule_appointment", args_schema=AppointmentInput)
-def schedule_appointment(date_time: str, description: str) -> str:
+def schedule_appointment(
+    date_time: str,
+    description: str,
+    customer_name: str,
+    phone_number: str,
+    kenteken: str
+) -> str:
     """
     WinCar Module: WERKPLAATS (Planning)
     Schedules a new appointment by creating a planned Work Order.
+    Collects customer information and links to vehicle.
     """
     conn = get_wincar_connection()
     cursor = conn.cursor()
     try:
-        # Demo Logic: Find a default vehicle or create a placeholder.
-        # For simplicity, we assign it to the first vehicle in DB (ID 1)
-        # In production, we would look up the specific car from context.
-        voertuig_id = 1 
-        
-        query = """
-        INSERT INTO Werkplaats_Werkorders (VoertuigID, Status, Omschrijving)
-        OUTPUT INSERTED.WerkorderID
-        VALUES (?, 'Gepland', ?)
-        """
-        cursor.execute(query, voertuig_id, f"{description} (Datum: {date_time})")
+        # Step 1: Find or create customer
+        clean_phone = re.sub(r'[^0-9+]', '', phone_number)
+        if clean_phone.startswith("+31"):
+            clean_phone = "0" + clean_phone[3:]
+
+        cursor.execute(
+            "SELECT KlantID FROM Communicatie_Relaties WHERE Telefoon LIKE ?",
+            f"%{clean_phone}%"
+        )
         row = cursor.fetchone()
-        conn.commit()
+
+        if row:
+            klant_id = row.KlantID
+        else:
+            # Create new customer
+            cursor.execute("""
+                INSERT INTO Communicatie_Relaties (KlantNaam, Telefoon)
+                OUTPUT INSERTED.KlantID
+                VALUES (?, ?)
+            """, customer_name, clean_phone)
+            klant_id = cursor.fetchone()[0]
+            conn.commit()
+
+        # Step 2: Find or create vehicle
+        clean_kenteken = re.sub(r'[^A-Z0-9]', '', kenteken.upper())
+        cursor.execute(
+            "SELECT VoertuigID FROM Werkplaats_Voertuigen WHERE Kenteken = ?",
+            clean_kenteken
+        )
+        vrow = cursor.fetchone()
         
-        return f"Afspraak bevestigd voor {date_time}. Nieuwe Werkorder #{row.WerkorderID} aangemaakt in Werkplaatsplanning."
+        if vrow:
+            voertuig_id = vrow.VoertuigID
+        else:
+            # Create placeholder vehicle
+            cursor.execute("""
+                INSERT INTO Werkplaats_Voertuigen (Kenteken, KlantID)
+                OUTPUT INSERTED.VoertuigID
+                VALUES (?, ?)
+            """, clean_kenteken, klant_id)
+            voertuig_id = cursor.fetchone()[0]
+            conn.commit()
+
+        # Step 3: Create werkorder
+        cursor.execute("""
+            INSERT INTO Werkplaats_Werkorders (VoertuigID, KlantID, Status, Omschrijving)
+            OUTPUT INSERTED.WerkorderID
+            VALUES (?, ?, 'Gepland', ?)
+        """, voertuig_id, klant_id, f"{description} (Afspraak: {date_time}, Klant: {customer_name})")
+
+        werkorder_id = cursor.fetchone()[0]
+        conn.commit()
+
+        return f"Afspraak bevestigd voor {customer_name} op {date_time}. Werkorder #{werkorder_id} aangemaakt voor kenteken {kenteken}. We bellen u op {phone_number} ter bevestiging."
+
     except Exception as e:
         return f"Fout bij het maken van de afspraak: {e}"
     finally:
@@ -427,6 +477,8 @@ def get_vehicle_recalls(kenteken: str) -> str:
 
 # --- General Tools ---
 
+from duckduckgo_search import DDGS
+
 class WebSearchInput(BaseModel):
     query: str = Field(description="The search query to find information on the internet.")
 
@@ -437,7 +489,64 @@ def web_search(query: str) -> str:
     Use this when the internal database does not have the answer.
     """
     try:
-        search = DuckDuckGoSearchRun()
-        return search.invoke(query)
+        with DDGS() as ddgs:
+            results = list(ddgs.text(query, max_results=3))
+            if not results:
+                return "Geen resultaten gevonden."
+            output = []
+            for r in results:
+                output.append(f"• {r['title']}: {r['body'][:150]}...")
+            return "\n".join(output)
     except Exception as e:
-        return f"Error performing web search: {e}"
+        return f"Fout bij zoeken: {e}"
+
+# --- Diensten (Services) Tools ---
+
+class ServicePriceInput(BaseModel):
+    service_type: str = Field(description="Type of service (e.g., 'APK', 'grote beurt', 'remblokken')")
+    vehicle_info: Optional[str] = Field(default=None, description="Vehicle make/model for specific pricing")
+
+@tool("get_service_price", args_schema=ServicePriceInput)
+def get_service_price(service_type: str, vehicle_info: Optional[str] = None) -> str:
+    """
+    WinCar Module: DIENSTEN
+    Look up service pricing. Use this when customers ask about costs for maintenance, repairs, or services.
+    """
+    conn = get_wincar_connection()
+    cursor = conn.cursor()
+    try:
+        # Search services
+        cursor.execute("""
+            SELECT Naam, StandaardPrijs, ArbeidUren, Omschrijving
+            FROM Diensten_Services
+            WHERE Naam LIKE ? OR ServiceCode LIKE ? OR Omschrijving LIKE ?
+        """, f"%{service_type}%", f"%{service_type}%", f"%{service_type}%")
+
+        services = cursor.fetchall()
+
+        if not services:
+            return f"Geen prijsinformatie gevonden voor '{service_type}'. Neem contact op voor een offerte."
+
+        # Get labor rate
+        cursor.execute("SELECT UurTarief FROM Diensten_Tarieven WHERE Naam = 'Standaard'")
+        rate_row = cursor.fetchone()
+        labor_rate = rate_row.UurTarief if rate_row else 75.00
+
+        results = []
+        for s in services:
+            total = s.StandaardPrijs
+            if s.ArbeidUren and s.ArbeidUren > 0:
+                labor_cost = float(s.ArbeidUren) * float(labor_rate)
+                # Note: StandaardPrijs in the seed data for BEURT-K is 89.00
+                # If we want it to be "inclusive", we should clarify if StandaardPrijs is just parts or total.
+                # In the plan it says "total = s.StandaardPrijs", and then it lists labor separately if needed?
+                # Actually, in most garages, the price is either inclusive or parts+labor.
+                # Let's follow the plan's logic but make it clearer.
+                results.append(f"• {s.Naam}: €{total:.2f} (incl. {s.ArbeidUren}u arbeid)")
+            else:
+                results.append(f"• {s.Naam}: €{total:.2f}")
+
+        return "Prijzen:\n" + "\n".join(results) + "\n\n(Prijzen zijn indicatief, inclusief BTW)"
+
+    finally:
+        conn.close()

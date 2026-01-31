@@ -1,6 +1,6 @@
-# CLAUDE.md - GarageAI Project Guide
+# GEMINI.md - GarageAI Project Guide
 
-This file helps Claude Code understand the GarageAI project and work effectively with it.
+This file helps Gemini CLI understand the GarageAI project and work effectively with it.
 
 ## Project Overview
 
@@ -50,7 +50,7 @@ GarageAI/
 │   ├── garage/            # GarageAI-specific agents & workflows
 │   └── _config/           # Manifests and agent registry
 │
-└── .agent/workflows/       # Claude Code slash commands
+└── .gemini/commands/       # Gemini CLI custom commands
 ```
 
 ## Common Commands
@@ -137,7 +137,7 @@ GarageAI uses **BMAD (Break Me And Deploy)** - a multi-agent workflow system wit
 
 ### Quick Start
 
-Use these slash commands:
+Use these custom commands:
 
 | Command | Description |
 |---------|-------------|

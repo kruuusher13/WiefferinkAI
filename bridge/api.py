@@ -55,7 +55,10 @@ async def startup_event():
 @app.get("/api/db/{table_name}")
 async def get_db_table(table_name: str):
     """Fetch all rows from a specified table for visualization."""
-    valid_tables = ["customers", "werkorders", "stock"]
+    valid_tables = [
+        "customers", "vehicles", "werkorders", "lines", 
+        "stock", "categories", "services", "rates", "invoices"
+    ]
     if table_name not in valid_tables:
         raise HTTPException(status_code=400, detail="Invalid table name")
     
@@ -66,8 +69,14 @@ async def get_db_table(table_name: str):
         # Determine actual table name in DB
         db_table = ""
         if table_name == "customers": db_table = "Communicatie_Relaties"
+        elif table_name == "vehicles": db_table = "Werkplaats_Voertuigen"
         elif table_name == "werkorders": db_table = "Werkplaats_Werkorders"
+        elif table_name == "lines": db_table = "Werkplaats_WerkorderRegels"
         elif table_name == "stock": db_table = "Magazijn_Artikelen"
+        elif table_name == "categories": db_table = "Magazijn_Categorieen"
+        elif table_name == "services": db_table = "Diensten_Services"
+        elif table_name == "rates": db_table = "Diensten_Tarieven"
+        elif table_name == "invoices": db_table = "Financieel_Facturen"
         
         cursor.execute(f"SELECT * FROM {db_table}")
         columns = [column[0] for column in cursor.description]

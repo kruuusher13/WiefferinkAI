@@ -272,7 +272,7 @@ APPOINTMENT BOOKING FLOW:
 Before scheduling an appointment, you MUST collect:
 1. Customer name: "Mag ik uw naam?"
 2. Phone number: "En uw telefoonnummer voor bevestiging?"
-3. Optionally kenteken if not already provided
+3. Kenteken if not already provided
 4. Then confirm the appointment details before booking
 ```
 
@@ -287,6 +287,7 @@ Harry: "En uw telefoonnummer voor de bevestiging?"
 User: "06 12 34 56 78"
 Harry: [Calls schedule_appointment with all parameters]
 Harry: "Uw afspraak is bevestigd, meneer Bakker. Werkorder 2024004 is aangemaakt voor dinsdag 10:00. We bellen u op 0612345678 ter bevestiging."
+
 ```
 
 ---

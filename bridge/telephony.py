@@ -50,7 +50,9 @@ from app.tools import (
     generate_payment_link,
     lookup_vehicle_rdw,
     check_apk_status,
-    get_vehicle_recalls
+    get_vehicle_recalls,
+    web_search,
+    get_service_price  # Added get_service_price
 )
 
 # Gemini Live API Configuration
@@ -72,6 +74,14 @@ LANGUAGE RULES:
 - You normally speak ENGLISH.
 - However, if the user speaks Dutch, OR if you receive a "LANGUAGE_SWITCH" signal, switch to Dutch immediately.
 - Once switched, stay in that language unless the user switches back.
+
+APPOINTMENT BOOKING FLOW:
+Before scheduling an appointment, you MUST collect:
+1. Customer name: "Mag ik uw naam?"
+2. Phone number: "En uw telefoonnummer voor bevestiging?"
+3. Kenteken (License Plate): "Om welke auto gaat het? Mag ik het kenteken?"
+4. ASK PERMISSION to check vehicle status: "Zal ik gelijk even de APK status controleren?" -> If yes, call check_apk_status.
+5. Then confirm the appointment details before booking.
 
 DUTCH GREETING:
 "Moin! Ik ben Harry, de slimme assistent van Garage Wiefferink. Ik kan je helpen bij bijna al je vragen! Zeg het maar, waar kan ik je vandaag mee helpen?"
@@ -119,14 +129,17 @@ TOOLS_SCHEMA = [
             },
             {
                 "name": "schedule_appointment",
-                "description": "Schedule a workshop appointment.",
+                "description": "Schedule a workshop appointment. IMPORTANT: Always collect customer name, phone number AND kenteken before calling this tool.",
                 "parameters": {
                     "type": "OBJECT",
                     "properties": {
                         "date_time": {"type": "STRING", "description": "Date/Time (YYYY-MM-DD HH:MM)."},
-                        "description": {"type": "STRING", "description": "Service description."}
+                        "description": {"type": "STRING", "description": "Service description (APK, beurt, etc.)."},
+                        "customer_name": {"type": "STRING", "description": "Customer's full name."},
+                        "phone_number": {"type": "STRING", "description": "Phone number for confirmation."},
+                        "kenteken": {"type": "STRING", "description": "Vehicle license plate (REQUIRED)."}
                     },
-                    "required": ["date_time", "description"]
+                    "required": ["date_time", "description", "customer_name", "phone_number", "kenteken"]
                 }
             },
             {
@@ -160,6 +173,29 @@ TOOLS_SCHEMA = [
                         "kenteken": {"type": "STRING", "description": "Dutch license plate (e.g., 'AB-123-CD' or 'AB123CD')."}
                     },
                     "required": ["kenteken"]
+                }
+            },
+            {
+                "name": "web_search",
+                "description": "Search the internet for general information, car maintenance costs, or answers not in the database.",
+                "parameters": {
+                    "type": "OBJECT",
+                    "properties": {
+                        "query": {"type": "STRING", "description": "The search query"}
+                    },
+                    "required": ["query"]
+                }
+            },
+            {
+                "name": "get_service_price",
+                "description": "Look up service pricing for maintenance, repairs, APK, etc. Use when customer asks 'wat kost...' or 'hoeveel is...'",
+                "parameters": {
+                    "type": "OBJECT",
+                    "properties": {
+                        "service_type": {"type": "STRING", "description": "Service type (APK, grote beurt, remblokken, etc.)"},
+                        "vehicle_info": {"type": "STRING", "description": "Vehicle make/model (optional)"}
+                    },
+                    "required": ["service_type"]
                 }
             }
         ]
@@ -285,6 +321,10 @@ async def websocket_endpoint(websocket: WebSocket):
                                         result = check_apk_status.invoke(f_args)
                                     elif f_name == "get_vehicle_recalls":
                                         result = get_vehicle_recalls.invoke(f_args)
+                                    elif f_name == "web_search":
+                                        result = web_search.invoke(f_args)
+                                    elif f_name == "get_service_price":
+                                        result = get_service_price.invoke(f_args)
                                     else:
                                         result = f"Error: Unknown tool {f_name}"
                                 except Exception as e:
@@ -336,8 +376,17 @@ async def websocket_endpoint(websocket: WebSocket):
                 except Exception as e:
                     logger.error(f"Error in receive_from_gemini: {e}")
 
-            # Run both listeners concurrently
-            await asyncio.gather(receive_from_twilio(), receive_from_gemini())
+            # Run both listeners concurrently using wait to ensure cleanup
+            task1 = asyncio.create_task(receive_from_twilio())
+            task2 = asyncio.create_task(receive_from_gemini())
+            
+            done, pending = await asyncio.wait(
+                [task1, task2],
+                return_when=asyncio.FIRST_COMPLETED
+            )
+            
+            for task in pending:
+                task.cancel()
 
     except Exception as e:
         logger.error(f"Bridge error: {e}")
@@ -540,6 +589,8 @@ async def websocket_web_endpoint(websocket: WebSocket):
                                     elif f_name == "lookup_vehicle_rdw": result = lookup_vehicle_rdw.invoke(f_args)
                                     elif f_name == "check_apk_status": result = check_apk_status.invoke(f_args)
                                     elif f_name == "get_vehicle_recalls": result = get_vehicle_recalls.invoke(f_args)
+                                    elif f_name == "web_search": result = web_search.invoke(f_args)
+                                    elif f_name == "get_service_price": result = get_service_price.invoke(f_args)
                                     else: result = f"Error: Unknown tool {f_name}"
                                 except Exception as e:
                                     result = f"Tool Execution Error: {e}"
@@ -558,8 +609,17 @@ async def websocket_web_endpoint(websocket: WebSocket):
                 except Exception as e:
                     logger.error(f"Error in receive_from_gemini: {e}")
 
-            # Run concurrently
-            await asyncio.gather(receive_from_web(), receive_from_gemini())
+            # Run concurrently using wait to ensure cleanup
+            task1 = asyncio.create_task(receive_from_web())
+            task2 = asyncio.create_task(receive_from_gemini())
+            
+            done, pending = await asyncio.wait(
+                [task1, task2],
+                return_when=asyncio.FIRST_COMPLETED
+            )
+            
+            for task in pending:
+                task.cancel()
 
     except Exception as e:
         logger.error(f"Web Bridge error: {e}")
