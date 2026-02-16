@@ -1,7 +1,3 @@
----
-description: 'Get help with BMAD - what to do next, which agent to use'
----
-
 # BMAD Help
 
 You are providing help and guidance for the BMAD workflow system.
@@ -26,6 +22,7 @@ Help the user understand:
 | 🎙️ Harry (Voice) | `/bmad-voice` | Audio/telephony issues |
 | 🗄️ Pieter (Database) | `/bmad-db` | SQL, WinCar, data modeling |
 | 🚀 Barry (Quick Dev) | `/bmad-quick` | Fast implementation |
+| 🔍 Tessa (Testing) | `/bmad-test` | QA and verification |
 
 ### Workflows
 

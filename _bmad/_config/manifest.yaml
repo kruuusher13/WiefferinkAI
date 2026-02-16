@@ -17,6 +17,6 @@ modules:
 
 # Supported Environments
 environments:
-  - claude-code
+  - gemini-cli
   - cursor
   - vscode

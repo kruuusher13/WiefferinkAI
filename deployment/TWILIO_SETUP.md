@@ -45,6 +45,14 @@
    *Recommendation*: Stick to Option A (TwiML Bin) as it isolates the logic from your server needing to host the XML.
 
 ## 4. Testing
-1. Call your Twilio number.
-2. You should see "Twilio WebSocket connection accepted" in your server logs.
-3. Start speaking.
+1. Make sure the backend is running: `python -m uvicorn bridge.api:app --port 8000 --host 0.0.0.0`
+2. Make sure ngrok is running (if testing locally): `ngrok http 8000`
+3. Call your Twilio number.
+4. You should see "Twilio WebSocket connection accepted" in your server logs.
+5. Harry should greet you.
+
+## 5. Important Notes
+- **ngrok URL changes** every restart (unless you have a paid plan with a reserved domain). Update the TwiML Bin each time.
+- **Audio path**: Twilio sends 8kHz mu-law → bridge resamples to 16kHz PCM for Gemini → Gemini returns 24kHz PCM → bridge resamples back to 8kHz mu-law for Twilio.
+- The WebSocket endpoint is `/ws/twilio` (separate from the web dashboard's `/ws/web`).
+- The web dashboard at `localhost:3000` won't show Twilio call data — that path is separate from the web voice widget.

@@ -13,3 +13,22 @@ logs/
 *.prod
 *.pdf
 .claude/plans/
+
+
+# Large binary files
+*.png
+*.jpg
+*.jpeg
+*.gif
+
+# Command Center (Next.js) build artifacts
+garage-ai-command-center/.next/
+garage-ai-command-center/out/
+garage-ai-command-center/tsconfig.tsbuildinfo
+frontend.log
+
+# Test cache
+.pytest_cache/
+
+# OS artifacts (subdirectories)
+**/.DS_Store

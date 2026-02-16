@@ -9,13 +9,13 @@ USERNAME = 'sa'
 PASSWORD = 'StrongPassword123!'
 DRIVER = '{ODBC Driver 17 for SQL Server}'
 
-CONN_STR = f'DRIVER={DRIVER};SERVER={SERVER};DATABASE={DATABASE};UID={USERNAME};PWD={PASSWORD}'
+CONN_STR = f'DRIVER={DRIVER};SERVER={SERVER};DATABASE={DATABASE};UID={USERNAME};PWD={PASSWORD};Connection Timeout=3'
 
 def wait_for_db():
-    retries = 30
+    retries = 5
     while retries > 0:
         try:
-            conn = pyodbc.connect(CONN_STR)
+            conn = pyodbc.connect(CONN_STR, timeout=3)
             conn.close()
             print("Database is ready!")
             return
@@ -26,28 +26,19 @@ def wait_for_db():
     raise Exception("Database failed to start")
 
 def execute_script(filename):
-    # Connect to master to create DB
+    print(f"Executing script: {filename}")
+    # Connect to master to drop/create DB
     conn = pyodbc.connect(CONN_STR)
     conn.autocommit = True
     cursor = conn.cursor()
-    
-    # Drop/Create WinCarLive DB
+
     try:
-        # Ensure we aren't hanging on to old connections
-        cursor.execute("USE master")
-        try:
-            cursor.execute("ALTER DATABASE WinCarLive SET SINGLE_USER WITH ROLLBACK IMMEDIATE")
-            cursor.execute("DROP DATABASE WinCarLive")
-            print("Dropped existing database.")
-        except Exception as e:
-            # Maybe it doesn't exist, that's fine
-            print(f"Note: drop database failed (might not exist): {e}")
-            pass
-        
+        cursor.execute("DROP DATABASE IF EXISTS WinCarLive")
         cursor.execute("CREATE DATABASE WinCarLive")
+        print("Dropped existing database.")
         print("Created WinCarLive database.")
     except Exception as e:
-        print(f"Critical Error creating database: {e}")
+        print(f"Error resetting DB: {e}")
         raise e
     finally:
         conn.close()
@@ -56,8 +47,13 @@ def execute_script(filename):
     conn = pyodbc.connect(CONN_STR.replace("master", "WinCarLive"), autocommit=True)
     cursor = conn.cursor()
 
-    with open(filename, 'r') as f:
+    # Resolve file path relative to this script
+    script_dir = os.path.dirname(os.path.abspath(__file__))
+    file_path = os.path.join(script_dir, filename)
+
+    with open(file_path, 'r') as f:
         sql_content = f.read()
+
         
     # Split by simple semicolon logic (naive but works for this seed file)
     commands = sql_content.split(';')

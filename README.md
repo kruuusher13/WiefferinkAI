@@ -1,108 +1,237 @@
-# GarageAI v2.0 - Voice-Enabled Garage Assistant
+# GarageAI
 
-GarageAI is a cutting-edge voice assistant designed for automotive workshops. It serves as a bridge between **Twilio** (telephony) and **Google Gemini Live** (multimodal AI), enabling real-time, low-latency (<800ms) conversation with customers about appointments, vehicle status, and parts.
+Voice-enabled customer service assistant for Dutch automotive garages. Harry, the AI receptionist, handles inbound calls — looking up vehicle status, booking appointments, and checking parts inventory — in real-time Dutch conversation via phone.
 
-## 🚀 New in v2.0
+## Stack
 
-- **🤖 Harry AI Persona** - The AI introduces itself as "Harry" and greets the user first.
-- **📊 Real-time Dashboard** - A premium glassmorphism web interface for monitoring and testing.
-- **🗄️ Database Insight** - Direct visualization of WinCar tables (Klanten, Werkorders, Voorraad) in the web app.
-- **✍️ Prototype Prompt Window** - Live-inject new system instructions without restarting the server.
-- **⚙️ Auto-Initialization** - The database is automatically seeded and initialized on every server run.
-- **🔊 Sample Rate Optimization** - Fixed slow-motion audio by handling 16kHz input and 24kHz output paths correctly.
-
-## 📋 Quick Start
-
-### Fast Setup
-
-```bash
-# 1. Create virtual environment
-python3 -m venv .venv && source .venv/bin/activate
-
-# 2. Install dependencies  
-pip install -r requirements.txt
-
-# 3. Configure environment
-cp .env.example .env  # Then add your GOOGLE_API_KEY
-
-# 4. Start Database (SQL Server)
-docker-compose up -d
-
-# 5. Start server (This will automatically initialize the DB schema)
-python -m uvicorn bridge.api:app --port 8000 --reload
-
-#kill old processes (if server does'nt start)
-lsof -i :8000 -t | xargs kill -9 2>/dev/null || true
-
-# 6. Open Dashboard
-open http://localhost:8000/web/index.html
-```
-
-## 🏗️ Architecture
-
-```
-GarageAI/
-├── app/                    # Core Logic
-│   ├── graph.py           # LangGraph agent
-│   ├── tools.py           # WinCar database tools
-│   ├── init_db.py         # Database initialization logic
-│   └── mock_wincar_db.sql # SQL Seed script
-├── bridge/                 # Interface Layer
-│   ├── api.py             # FastAPI & DB Visualization Endpoints
-│   ├── telephony.py       # WebSocket bridges (Twilio + Web)
-│   └── audio.py           # Audio resampling (16k in / 24k out)
-├── web_test/               # Browser Dashboard v2
-│   ├── index.html         # Premium Dashboard UI
-│   └── static/client.js   # Advanced WebSocket & UI Logic
-├── deployment/             # Production Deployment
-│   ├── deploy_cloudrun.sh # Google Cloud Run script
-│   └── TWILIO_SETUP.md    # Twilio configuration guide
-├── docs/                   # Documentation
-│   ├── ARCHITECTURE.md    # System design
-│   ├── PRD.md             # Product requirements
-│   └── API_REFERENCE.md   # Endpoint documentation
-├── .env                    # Environment variables (not committed)
-├── requirements.txt        # Python dependencies
-└── RUN_ME.md              # Quick start guide
-```
-
-## 🛠️ Available Tools
-
-| Tool | Description |
-|------|-------------|
-| `identify_customer` | Look up customer by phone number |
-| `check_werkorder_status` | Check repair order status |
-| `check_part_stock` | Query parts inventory |
-| `schedule_appointment` | Book service appointments |
-
-## 🌐 API Endpoints
-
-| Endpoint | Method | Description |
-|----------|--------|-------------|
-| `/` | GET | Health check |
-| `/api/db/{name}` | GET | Fetch database table rows for visualization |
-| `/ws/web` | WebSocket | Web dashboard interface (PCM 16k/24k) |
-| `/ws/twilio` | WebSocket | Twilio media stream (mu-law 8k) |
-| `/web/index.html` | GET | Dashboard UI |
-
-## 🔧 Configuration
-
-### Required Environment Variables
-
-```env
-GOOGLE_API_KEY=your_gemini_api_key
-TWILIO_ACCOUNT_SID=your_twilio_sid
-TWILIO_AUTH_TOKEN=your_twilio_auth_token
-```
-
-## 📈 Mission Metrics
-
-| Metric | Target | Status |
-|--------|--------|--------|
-| Voice Latency | < 800ms | ✅ Optimized |
-| Audio Quality | Clear | ✅ Resampling Corrected |
-| DB Sync | Real-time | ✅ Visualizer Added |
+| Layer | Technology |
+|---|---|
+| Backend | Python 3.12, FastAPI, LangGraph |
+| AI | Google Gemini 2.0 Flash (Live API) |
+| Telephony | Twilio, WebSockets |
+| Database | SQL Server (Azure SQL Edge via Docker) |
+| Frontend | Next.js 16, React 19, TypeScript, Tailwind CSS |
 
 ---
 
-**Built with ❤️ for Garage Wiefferink**
+## Quick Start
+
+**Prerequisites:** Python 3.12+, Node.js 20+, pnpm, Docker Desktop, ODBC Driver 17 for SQL Server
+
+```bash
+cp .env.example .env        # set GOOGLE_API_KEY
+./start_all.sh
+```
+
+| Service | URL |
+|---|---|
+| Dashboard | http://localhost:3000 |
+| Backend API | http://localhost:8000 |
+| API docs | http://localhost:8000/docs |
+
+For Twilio phone calls, expose the backend:
+```bash
+ngrok http 8000
+```
+
+---
+
+## Project Structure
+
+```
+GarageAI/
+├── app/
+│   ├── graph.py            # LangGraph agent + Harry system prompt
+│   ├── tools.py            # 10 tools (WinCar, RDW, web search)
+│   ├── init_db.py          # Database init on startup
+│   └── mock_wincar_db.sql  # SQL seed data
+│
+├── bridge/
+│   ├── api.py              # FastAPI app, REST endpoints, CORS
+│   ├── telephony.py        # WebSocket handlers (Twilio + Web), Gemini Live
+│   └── audio.py            # Audio conversion (mu-law ↔ PCM, resampling)
+│
+├── garage-ai-command-center/   # Next.js dashboard
+│   ├── app/                    # App router
+│   ├── components/command-center/  # Live Stream, Vehicle Context, Action Queue
+│   └── next.config.mjs         # API proxy → :8000
+│
+├── _bmad/                  # BMAD workflow system (agents, workflows, templates)
+├── tests/                  # Pytest suite
+├── deployment/             # Docker + Cloud Run configs
+├── docker-compose.yml      # SQL Server container
+├── requirements.txt        # Python deps
+└── start_all.sh            # One-command full-stack startup
+```
+
+---
+
+## Backend
+
+### API Endpoints
+
+| Method | Path | Description |
+|---|---|---|
+| GET | `/` | Health check |
+| GET | `/api/db/{table}` | DB table data for dashboard |
+| POST | `/chat` | LangGraph agent (streaming, Vapi-compatible) |
+| WS | `/ws/web` | Browser WebSocket (PCM 16k/24k) |
+| WS | `/ws/twilio` | Twilio media stream (mu-law 8k) |
+
+Valid `{table}` values: `customers`, `vehicles`, `werkorders`, `lines`, `stock`, `categories`, `services`, `rates`, `invoices`
+
+### Tools
+
+| Tool | Source | Purpose |
+|---|---|---|
+| `identify_customer` | WinCar | Customer lookup by phone |
+| `check_werkorder_status` | WinCar | Work order status by licence plate |
+| `check_part_stock` | WinCar | Parts availability and price |
+| `schedule_appointment` | WinCar | Book service appointment |
+| `generate_payment_link` | WinCar | Create Mollie payment link |
+| `get_service_price` | WinCar | Labour rates and service costs |
+| `lookup_vehicle_rdw` | RDW | Vehicle specs by licence plate |
+| `check_apk_status` | RDW | MOT expiry date |
+| `get_vehicle_recalls` | RDW | Active vehicle recalls |
+| `web_search` | DuckDuckGo | General web search |
+
+### Audio Pipeline
+
+```
+Twilio  →  8 kHz µ-law  →  16 kHz PCM  →  Gemini Live
+Gemini  →  24 kHz PCM   →  8 kHz µ-law  →  Twilio
+Browser →  16 kHz PCM   →  Gemini Live
+Gemini  →  24 kHz PCM   →  Browser
+```
+
+Latency budget: **< 800ms** (200ms network + 400ms Gemini + 200ms code)
+
+---
+
+## Database Schema
+
+`WinCarLive` SQL Server database (auto-seeded on startup):
+
+| Table | Module | Contents |
+|---|---|---|
+| `Communicatie_Relaties` | CRM | Customers |
+| `Werkplaats_Voertuigen` | Workshop | Vehicles |
+| `Werkplaats_Werkorders` | Workshop | Work orders |
+| `Werkplaats_WerkorderRegels` | Workshop | Work order line items |
+| `Magazijn_Artikelen` | Inventory | Parts stock |
+| `Magazijn_Categorieen` | Inventory | Part categories |
+| `Diensten_Services` | Services | Service definitions |
+| `Diensten_Tarieven` | Services | Labour rates |
+| `Financieel_Facturen` | Financial | Invoices |
+
+---
+
+## Frontend
+
+Next.js dashboard (`garage-ai-command-center/`) with three panels:
+
+- **Live Stream** — real-time call transcript with keyword highlighting and audio waveform
+- **Vehicle Context** — RDW vehicle intelligence (specs, MOT, recalls)
+- **Action Queue** — Kanban board for AI-generated tasks pending human approval
+
+API calls proxy to the FastAPI backend via `next.config.mjs`. WebSocket connects directly to `ws://localhost:8000`.
+
+```bash
+cd garage-ai-command-center
+pnpm install && pnpm dev   # dev on :3000
+pnpm build                 # production build
+```
+
+---
+
+## Development
+
+### Running tests
+
+```bash
+pytest tests/
+```
+
+### Backend only
+
+```bash
+python -m uvicorn bridge.api:app --port 8000 --reload
+```
+
+### Adding a tool
+
+```python
+# app/tools.py
+class NewToolInput(BaseModel):
+    param: str = Field(description="Description for the AI")
+
+@tool("tool_name", args_schema=NewToolInput)
+def tool_name(param: str) -> str:
+    """WinCar Module: [MODULE] - What this tool does."""
+    conn = get_wincar_connection()
+    cursor = conn.cursor()
+    try:
+        cursor.execute("SELECT ...", param)
+        row = cursor.fetchone()
+        return f"Result: {row.Column}" if row else "Niet gevonden."
+    finally:
+        conn.close()
+```
+
+Then add it to the tools list in `app/graph.py`.
+
+### Conventions
+
+- Code comments: English
+- Customer-facing responses: Dutch
+- Type hints on all functions
+- DB connections always closed in `finally` blocks
+
+---
+
+## Environment Variables
+
+| Variable | Required | Description |
+|---|---|---|
+| `GOOGLE_API_KEY` | Yes | Gemini API key |
+| `TWILIO_ACCOUNT_SID` | Phone only | Twilio account SID |
+| `TWILIO_AUTH_TOKEN` | Phone only | Twilio auth token |
+
+---
+
+## BMAD Workflow System
+
+BMAD is the multi-agent development system built into this project. Use Claude CLI commands:
+
+| Command | Agent | Role |
+|---|---|---|
+| `/bmad` | Master | Menu + orchestration |
+| `/bmad-pm` | Jan | Requirements, PRDs |
+| `/bmad-architect` | Willem | System design |
+| `/bmad-dev` | Sophie | Implementation |
+| `/bmad-voice` | Harry | Telephony, audio |
+| `/bmad-db` | Pieter | SQL, WinCar schema |
+| `/bmad-quick` | Barry | Fast-track dev |
+| `/bmad-test` | Tessa | QA, test plans |
+| `/bmad-feature` | — | Full feature workflow |
+| `/bmad-bugfix` | — | Bug investigation |
+| `/bmad-review` | — | Code review |
+| `/bmad-release` | — | Release prep |
+
+Agent definitions: `_bmad/garage/agents/` | Workflows: `_bmad/garage/workflows/`
+
+---
+
+## Troubleshooting
+
+**`ModuleNotFoundError: No module named 'app.graph'`**
+Set `PYTHONPATH` to the project root, or add it to `.env`.
+
+**Connection refused on WebSocket**
+Verify the server is running: `curl http://localhost:8000/`
+
+**Gemini API key error**
+Check `.env` has `GOOGLE_API_KEY=...` and restart the server.
+
+**Pydantic validation error**
+Ensure Pydantic v2: `pip install --upgrade "pydantic>=2.0" pydantic-settings`

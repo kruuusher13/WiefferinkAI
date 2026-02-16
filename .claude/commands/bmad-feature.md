@@ -1,7 +1,3 @@
----
-description: 'Start the full Feature Development workflow'
----
-
 # Feature Development Workflow
 
 You are starting the **Feature Development Workflow** for GarageAI.
@@ -16,8 +12,8 @@ DISCOVER → DESIGN → BUILD → REVIEW
 
 ## Activation
 
-1. Load the configuration from `_bmad/core/config.yaml`
-2. Load the workflow from `_bmad/garage/workflows/feature-development/workflow.md`
+1. Read the configuration from `_bmad/core/config.yaml`
+2. Read the workflow from `_bmad/garage/workflows/feature-development/workflow.md`
 3. Follow the workflow instructions exactly
 4. Switch between agents as the workflow directs
 

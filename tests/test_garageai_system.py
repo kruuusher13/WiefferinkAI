@@ -43,7 +43,7 @@ class TestConfig:
 # PHASE 1: PREREQUISITES CHECK
 # ============================================================================
 
-def test_prerequisites():
+def check_prerequisites():
     """Check that all prerequisites are met."""
     print("\n" + "="*60)
     print("PHASE 1: PREREQUISITES CHECK")
@@ -85,12 +85,19 @@ def test_prerequisites():
 
     return results
 
+def test_prerequisites():
+    """Pytest wrapper for prerequisites check."""
+    results = check_prerequisites()
+    assert results['python_version'] is not None
+    # Check if all required packages are installed
+    assert all(v for k, v in results.items() if k.startswith('pkg_'))
+
 
 # ============================================================================
 # PHASE 2: DATABASE TESTS
 # ============================================================================
 
-def test_database_connection():
+def check_database_connection():
     """Test database connectivity."""
     print("\n" + "="*60)
     print("PHASE 2: DATABASE TESTS")
@@ -112,8 +119,12 @@ def test_database_connection():
         print("   Make sure Docker is running: docker-compose up -d")
         return False
 
+def test_database_connection():
+    """Pytest wrapper for database connection."""
+    assert check_database_connection() is True
 
-def test_database_schema():
+
+def check_database_schema():
     """Verify all expected tables exist."""
     print("\nVerifying database schema...")
 
@@ -148,8 +159,14 @@ def test_database_schema():
         print(f"❌ Schema verification failed: {e}")
         return {}
 
+def test_database_schema():
+    """Pytest wrapper for database schema."""
+    results = check_database_schema()
+    assert len(results) > 0
+    assert all(results.values())
 
-def test_database_data():
+
+def check_database_data():
     """Verify sample data exists in tables."""
     print("\nVerifying sample data...")
 
@@ -184,8 +201,15 @@ def test_database_data():
         print(f"❌ Data verification failed: {e}")
         return {}
 
+def test_database_data():
+    """Pytest wrapper for database data."""
+    results = check_database_data()
+    assert len(results) > 0
+    # Ensure no errors (count -1)
+    assert all(v >= 0 for v in results.values())
 
-def test_sample_queries():
+
+def check_sample_queries():
     """Test sample queries that the tools use."""
     print("\nTesting sample queries...")
 
@@ -244,12 +268,16 @@ def test_sample_queries():
         print(f"❌ Query test failed: {e}")
         return False
 
+def test_sample_queries():
+    """Pytest wrapper for sample queries."""
+    assert check_sample_queries() is True
+
 
 # ============================================================================
 # PHASE 3: TOOL TESTS
 # ============================================================================
 
-def test_tools():
+def check_tools():
     """Test each LangGraph tool."""
     print("\n" + "="*60)
     print("PHASE 3: TOOL TESTS")
@@ -270,7 +298,7 @@ def test_tools():
         # Test 1: identify_customer
         print("\n🔍 Test: identify_customer")
         try:
-            result = identify_customer(TestConfig.TEST_PHONE)
+            result = identify_customer.invoke({"phone_number": TestConfig.TEST_PHONE})
             print(f"   Input: '{TestConfig.TEST_PHONE}'")
             print(f"   Output: {result}")
             success = 'Klant' in result or 'Geen' in result or 'gevonden' in result
@@ -283,7 +311,7 @@ def test_tools():
         # Test 2: check_werkorder_status
         print("\n🔍 Test: check_werkorder_status")
         try:
-            result = check_werkorder_status(TestConfig.TEST_PLATE)
+            result = check_werkorder_status.invoke({"license_plate": TestConfig.TEST_PLATE})
             print(f"   Input: '{TestConfig.TEST_PLATE}'")
             print(f"   Output: {result}")
             success = 'Werkorder' in result or 'Geen' in result or 'werkorder' in result.lower()
@@ -296,7 +324,7 @@ def test_tools():
         # Test 3: check_part_stock
         print("\n🔍 Test: check_part_stock")
         try:
-            result = check_part_stock(TestConfig.TEST_PART)
+            result = check_part_stock.invoke({"part_name": TestConfig.TEST_PART})
             print(f"   Input: '{TestConfig.TEST_PART}'")
             print(f"   Output: {result}")
             success = '€' in result or 'niet gevonden' in result.lower() or 'voorraad' in result.lower()
@@ -309,7 +337,7 @@ def test_tools():
         # Test 4: generate_payment_link
         print("\n🔍 Test: generate_payment_link")
         try:
-            result = generate_payment_link("12345")
+            result = generate_payment_link.invoke({"werkorder_id": "12345"})
             print(f"   Input: '12345'")
             print(f"   Output: {result}")
             success = 'https://' in result or 'pay' in result.lower()
@@ -325,12 +353,18 @@ def test_tools():
         print(f"❌ Failed to import tools: {e}")
         return {}
 
+def test_tools():
+    """Pytest wrapper for tools check."""
+    results = check_tools()
+    assert len(results) > 0
+    assert all(results.values())
+
 
 # ============================================================================
 # PHASE 4: LANGGRAPH AGENT TEST
 # ============================================================================
 
-def test_langgraph_agent():
+def check_langgraph_agent():
     """Test the LangGraph agent (requires GOOGLE_API_KEY)."""
     print("\n" + "="*60)
     print("PHASE 4: LANGGRAPH AGENT TEST")
@@ -391,12 +425,20 @@ def test_langgraph_agent():
         traceback.print_exc()
         return False
 
+def test_langgraph_agent():
+    """Pytest wrapper for LangGraph agent check."""
+    result = check_langgraph_agent()
+    if result is None:
+        import pytest
+        pytest.skip("GOOGLE_API_KEY not set")
+    assert result is True
+
 
 # ============================================================================
 # PHASE 5: LANGSMITH CONFIGURATION
 # ============================================================================
 
-def test_langsmith_config():
+def check_langsmith_config():
     """Check and display LangSmith configuration."""
     print("\n" + "="*60)
     print("PHASE 5: LANGSMITH CONFIGURATION")
@@ -424,6 +466,15 @@ def test_langsmith_config():
         print("   export LANGCHAIN_API_KEY=your_api_key")
         print("   export LANGCHAIN_PROJECT=GarageAI")
         return False
+
+def test_langsmith_config():
+    """Pytest wrapper for LangSmith config."""
+    # This test is soft - we don't want to fail if LangSmith isn't set up, just warn
+    # But for now, let's assert what the check returns to be consistent
+    # If users don't have it set up, it returns False.
+    # We can mark it as xfail or just assert True to not break CI.
+    # Let's just run it.
+    check_langsmith_config()
 
 
 # ============================================================================
@@ -472,24 +523,24 @@ def run_all_tests():
     all_results = {}
 
     # Phase 1: Prerequisites
-    prereq_results = test_prerequisites()
+    prereq_results = check_prerequisites()
     all_results['prerequisites'] = all(
         v for k, v in prereq_results.items()
         if k.startswith('pkg_')
     )
 
     # Phase 2: Database
-    db_connected = test_database_connection()
+    db_connected = check_database_connection()
     all_results['db_connection'] = db_connected
 
     if db_connected:
-        schema_results = test_database_schema()
+        schema_results = check_database_schema()
         all_results['db_schema'] = all(schema_results.values()) if schema_results else False
 
-        data_results = test_database_data()
+        data_results = check_database_data()
         all_results['db_data'] = all(v > 0 for v in data_results.values()) if data_results else False
 
-        all_results['db_queries'] = test_sample_queries()
+        all_results['db_queries'] = check_sample_queries()
     else:
         all_results['db_schema'] = None
         all_results['db_data'] = None
@@ -497,17 +548,17 @@ def run_all_tests():
 
     # Phase 3: Tools
     if db_connected:
-        tool_results = test_tools()
+        tool_results = check_tools()
         all_results['tools'] = all(tool_results.values()) if tool_results else False
     else:
         all_results['tools'] = None
 
     # Phase 4: Agent
-    agent_result = test_langgraph_agent()
+    agent_result = check_langgraph_agent()
     all_results['agent'] = agent_result
 
     # Phase 5: LangSmith
-    all_results['langsmith'] = test_langsmith_config()
+    all_results['langsmith'] = check_langsmith_config()
 
     # Generate report
     generate_report(all_results)

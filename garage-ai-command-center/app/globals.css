@@ -1,0 +1,124 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer utilities {
+  .text-balance {
+    text-wrap: balance;
+  }
+}
+
+@layer base {
+  :root {
+    /* VS Code-inspired deep dark theme */
+    --background: 0 0% 12%;
+    --foreground: 0 0% 90%;
+    --card: 0 0% 14.5%;
+    --card-foreground: 0 0% 90%;
+    --popover: 0 0% 14.5%;
+    --popover-foreground: 0 0% 90%;
+    --primary: 180 100% 70%;
+    --primary-foreground: 0 0% 7%;
+    --secondary: 0 0% 17%;
+    --secondary-foreground: 0 0% 80%;
+    --muted: 0 0% 17%;
+    --muted-foreground: 0 0% 55%;
+    --accent: 82 85% 60%;
+    --accent-foreground: 0 0% 7%;
+    --destructive: 0 72% 55%;
+    --destructive-foreground: 0 0% 98%;
+    --border: 0 0% 20%;
+    --input: 0 0% 20%;
+    --ring: 180 100% 70%;
+    --radius: 0.5rem;
+
+    /* Gemini CLI syntax colors */
+    --syntax-cyan: 180 100% 70%;
+    --syntax-lime: 82 85% 60%;
+    --syntax-orange: 30 100% 65%;
+    --syntax-purple: 270 80% 72%;
+    --syntax-pink: 330 85% 65%;
+
+    /* Surface tokens */
+    --surface-0: 0 0% 12%;
+    --surface-1: 0 0% 14.5%;
+    --surface-2: 0 0% 17%;
+    --surface-3: 0 0% 20%;
+
+    --sidebar-background: 0 0% 11%;
+    --sidebar-foreground: 0 0% 90%;
+    --sidebar-primary: 180 100% 70%;
+    --sidebar-primary-foreground: 0 0% 7%;
+    --sidebar-accent: 0 0% 17%;
+    --sidebar-accent-foreground: 0 0% 90%;
+    --sidebar-border: 0 0% 20%;
+    --sidebar-ring: 180 100% 70%;
+
+    --chart-1: 180 100% 70%;
+    --chart-2: 82 85% 60%;
+    --chart-3: 30 100% 65%;
+    --chart-4: 270 80% 72%;
+    --chart-5: 330 85% 65%;
+  }
+}
+
+@layer base {
+  * {
+    @apply border-border;
+  }
+  body {
+    @apply bg-background text-foreground;
+  }
+}
+
+/* Custom scrollbar for the dark theme */
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+::-webkit-scrollbar-track {
+  background: hsl(0 0% 12%);
+}
+::-webkit-scrollbar-thumb {
+  background: hsl(0 0% 25%);
+  border-radius: 3px;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: hsl(0 0% 35%);
+}
+
+/* Glassmorphism utility */
+.glass {
+  background: rgba(37, 37, 38, 0.7);
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+}
+
+/* Gradient border glow for alerts */
+.glow-border {
+  position: relative;
+}
+.glow-border::before {
+  content: '';
+  position: absolute;
+  inset: -1px;
+  border-radius: inherit;
+  padding: 1px;
+  background: linear-gradient(135deg, hsl(180 100% 70%), hsl(270 80% 72%), hsl(330 85% 65%));
+  mask: linear-gradient(#fff 0 0) content-box, linear-gradient(#fff 0 0);
+  mask-composite: exclude;
+  -webkit-mask-composite: xor;
+  pointer-events: none;
+}
+
+/* Waveform animation */
+@keyframes waveform {
+  0%, 100% { transform: scaleY(0.3); }
+  50% { transform: scaleY(1); }
+}
+
+/* Pulse ring */
+@keyframes pulse-ring {
+  0% { transform: scale(1); opacity: 0.8; }
+  100% { transform: scale(1.5); opacity: 0; }
+}

@@ -1,7 +1,3 @@
----
-description: 'Start the Code Review workflow'
----
-
 # Code Review Workflow
 
 You are starting the **Code Review Workflow** for GarageAI.
@@ -16,8 +12,8 @@ STRUCTURE → LOGIC → SECURITY → LATENCY
 
 ## Activation
 
-1. Load the configuration from `_bmad/core/config.yaml`
-2. Load the workflow from `_bmad/garage/workflows/code-review/workflow.md`
+1. Read the configuration from `_bmad/core/config.yaml`
+2. Read the workflow from `_bmad/garage/workflows/code-review/workflow.md`
 3. Follow the workflow instructions exactly
 
 ## Review Facets

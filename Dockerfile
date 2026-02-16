@@ -4,10 +4,17 @@ FROM python:3.12-slim
 # Set working directory
 WORKDIR /app
 
-# Install system dependencies (if any needed for audio processing basics)
-# libasound2-dev might be needed for some audio libs, but usually not for pure numpy/scipy processing
+# Install system dependencies
+# Added: curl, gnupg2, and MS SQL ODBC drivers for pyodbc
 RUN apt-get update && apt-get install -y \
     gcc \
+    curl \
+    gnupg2 \
+    unixodbc-dev \
+    && curl https://packages.microsoft.com/keys/microsoft.asc | apt-key add - \
+    && curl https://packages.microsoft.com/config/debian/11/prod.list > /etc/apt/sources.list.d/mssql-release.list \
+    && apt-get update \
+    && ACCEPT_EULA=Y apt-get install -y msodbcsql17 \
     && rm -rf /var/lib/apt/lists/*
 
 # Copy requirements first for caching

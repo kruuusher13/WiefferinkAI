@@ -25,11 +25,34 @@ import base64
 import asyncio
 import logging
 import websockets
+import re
+from enum import Enum
+from typing import Optional
 from fastapi import APIRouter, WebSocket, Request, FastAPI
 from fastapi.staticfiles import StaticFiles
 from starlette.websockets import WebSocketDisconnect
 from dotenv import load_dotenv
 from bridge.audio import AudioResampler
+
+
+# ============================================
+# CALL STATE MANAGEMENT (Component A: Live Stream)
+# ============================================
+
+class CallState(str, Enum):
+    """Call states for the Live Stream status pill."""
+    IDLE = "idle"
+    INCOMING = "incoming"
+    HARRY_TALKING = "harry_talking"
+    PROCESSING = "processing"
+
+
+# Sentiment Tag Regex
+SENTIMENT_PATTERN = re.compile(r"\[\[SENTIMENT:\s*(.+?)\]\]")
+# Thought Tag Regex (to strip internal reasoning)
+THOUGHT_PATTERN = re.compile(r"\[\[THOUGHT:.*?\]\]", re.DOTALL)
+# Fallback: Bold Headers (e.g. **Thinking**) - strip these too if they appear
+BOLD_HEADER_PATTERN = re.compile(r"\*\*.*?\*\*", re.DOTALL)
 
 # Load environment variables
 load_dotenv()
@@ -70,10 +93,16 @@ OBJECTIVE:
 - Be concise (max 2 sentences per response).
 - Be helpful and professional.
 
+SENTIMENT TRACKING (CRITICAL - DO FIRST):
+- Before EVERY response, call the `report_sentiment` function with the customer's emotional state.
+- This is a SILENT function call - the customer never hears it.
+- NEVER say words like "sentiment", "happy", "frustrated" etc. - just call the function.
+- Valid sentiments: "happy", "neutral", "frustrated", "sad"
+
 LANGUAGE RULES:
-- You normally speak ENGLISH.
-- However, if the user speaks Dutch, OR if you receive a "LANGUAGE_SWITCH" signal, switch to Dutch immediately.
-- Once switched, stay in that language unless the user switches back.
+- If the user speaks Dutch, YOU MUST SPEAK DUTCH.
+- If the conversation is in Dutch, STAY IN DUTCH until explicitly told to switch.
+- Only switch to English if the user speaks English.
 
 APPOINTMENT BOOKING FLOW:
 Before scheduling an appointment, you MUST collect:
@@ -82,6 +111,14 @@ Before scheduling an appointment, you MUST collect:
 3. Kenteken (License Plate): "Om welke auto gaat het? Mag ik het kenteken?"
 4. ASK PERMISSION to check vehicle status: "Zal ik gelijk even de APK status controleren?" -> If yes, call check_apk_status.
 5. Then confirm the appointment details before booking.
+
+CALL ENDING - FEEDBACK REQUEST:
+When the customer indicates they are done (says goodbye, "tot ziens", "doei", "dankjewel", "thanks, bye", etc.):
+1. ALWAYS ask for feedback before ending:
+   - Dutch: "Fijn dat ik kon helpen! Mag ik vragen: hoe vond u dit gesprek? Was u tevreden?"
+   - English: "Glad I could help! May I ask: how was this call? Were you satisfied?"
+2. Wait for their response - this feedback is important for quality tracking.
+3. Then say goodbye warmly.
 
 DUTCH GREETING:
 "Moin! Ik ben Harry, de slimme assistent van Garage Wiefferink. Ik kan je helpen bij bijna al je vragen! Zeg het maar, waar kan ik je vandaag mee helpen?"
@@ -94,6 +131,21 @@ ENGLISH GREETING:
 TOOLS_SCHEMA = [
     {
         "function_declarations": [
+            {
+                "name": "report_sentiment",
+                "description": "Report the detected customer sentiment. Call this ONCE at the start of EVERY response BEFORE speaking. This is silent and invisible to the customer.",
+                "parameters": {
+                    "type": "OBJECT",
+                    "properties": {
+                        "sentiment": {
+                            "type": "STRING",
+                            "enum": ["happy", "neutral", "frustrated", "sad"],
+                            "description": "The customer's current emotional state"
+                        }
+                    },
+                    "required": ["sentiment"]
+                }
+            },
             {
                 "name": "identify_customer",
                 "description": "Look up a customer by phone number.",
@@ -217,7 +269,9 @@ async def websocket_endpoint(websocket: WebSocket):
 
     resampler = AudioResampler()
     stream_sid = None
-    
+
+    # Reset sentiment state for new call
+
     try:
         # Connect to Gemini Live
         async with websockets.connect(GEMINI_URI) as gemini_ws:
@@ -262,10 +316,10 @@ async def websocket_endpoint(websocket: WebSocket):
                             payload = data["media"]["payload"]
                             # Twilio sends base64 encoded 8kHz mu-law
                             chunk = base64.b64decode(payload)
-                            
+
                             # Resample to 16kHz PCM for Gemini
                             pcm_data = resampler.mulaw_to_pcm(chunk)
-                            
+
                             # Send to Gemini
                             realtime_input = {
                                 "realtime_input": {
@@ -307,7 +361,12 @@ async def websocket_endpoint(websocket: WebSocket):
                                 
                                 # Execute Python function (Restored Real Logic)
                                 try:
-                                    if f_name == "identify_customer":
+                                    if f_name == "report_sentiment":
+                                        # Silent sentiment tracking - just log it
+                                        sentiment = f_args.get("sentiment", "neutral")
+                                        logger.info(f"[SENTIMENT] Twilio call: {sentiment}")
+                                        result = "ok"
+                                    elif f_name == "identify_customer":
                                         result = identify_customer.invoke(f_args)
                                     elif f_name == "check_werkorder_status":
                                         result = check_werkorder_status.invoke(f_args)
@@ -368,6 +427,26 @@ async def websocket_endpoint(websocket: WebSocket):
                                                 }
                                             }
                                             await websocket.send_text(json.dumps(media_message))
+                                
+                                # Handle text parts (for transcription & sentiment extraction)
+                                if "text" in part:
+                                    text_content = part["text"]
+                                    
+                                    # 1. Extract Sentiment
+                                    match = SENTIMENT_PATTERN.search(text_content)
+                                    if match:
+                                        sentiment = match.group(1)
+                                        logger.info(f"Twilio Call Sentiment: {sentiment}")
+                                        # Strip tag
+                                        text_content = SENTIMENT_PATTERN.sub("", text_content)
+
+                                    # 2. Strip Thoughts & Headers
+                                    text_content = THOUGHT_PATTERN.sub("", text_content)
+                                    text_content = BOLD_HEADER_PATTERN.sub("", text_content)
+                                    text_content = text_content.strip()
+                                    
+                                    # Note: Twilio doesn't display text, so we just log/clean it internally
+                                    # But if we were sending captions, we'd send `text_content` now.
                         
                         # Handle TurnComplete
                         if "turnComplete" in response:
@@ -388,6 +467,8 @@ async def websocket_endpoint(websocket: WebSocket):
             for task in pending:
                 task.cancel()
 
+            # Reset sentiment state for next call
+        
     except Exception as e:
         logger.error(f"Bridge error: {e}")
         await websocket.close()
@@ -400,11 +481,14 @@ async def websocket_web_endpoint(websocket: WebSocket):
     await websocket.accept()
     logger.info("Web Test WebSocket connection accepted")
 
+    # Reset sentiment state for new call
+    logger.info("Using text-based sentiment analysis")
+
     try:
         async with websockets.connect(GEMINI_URI) as gemini_ws:
             logger.info("Connected to Gemini Live API (Web Mode)")
             
-            # Initial Setup (Reuse same config as Twilio for consistency)
+            # Initial Setup for Gemini (matching Twilio config)
             setup_config = {
                 "setup": {
                     "model": GEMINI_MODEL,
@@ -419,6 +503,7 @@ async def websocket_web_endpoint(websocket: WebSocket):
                 }
             }
             await gemini_ws.send(json.dumps(setup_config))
+            logger.info("Sent Gemini setup config")
 
             # --- TRIGGER INITIAL GREETING ---
             # Send an initial message to the AI to start the conversation
@@ -434,6 +519,9 @@ async def websocket_web_endpoint(websocket: WebSocket):
             await gemini_ws.send(json.dumps(initial_msg))
             logger.info("Triggered initial AI greeting")
 
+            # Track last sent sentiment to avoid duplicate sends
+            last_sent_sentiment = "😐"
+
             async def receive_from_web():
                 try:
                     while True:
@@ -444,7 +532,7 @@ async def websocket_web_endpoint(websocket: WebSocket):
                         if msg_type == "audio":
                             # Client sends Base64 PCM 16kHz
                             b64_pcm = data["data"]
-                            
+
                             # Send directly to Gemini (it expects 16k/24k PCM)
                             realtime_input = {
                                 "realtime_input": {
@@ -521,14 +609,36 @@ async def websocket_web_endpoint(websocket: WebSocket):
                     logger.error(f"Error in receive_from_web: {e}")
 
             async def receive_from_gemini():
+                nonlocal last_sent_sentiment
+                current_state = CallState.IDLE
+
+                async def emit_state(new_state: CallState):
+                    nonlocal current_state
+                    if new_state != current_state:
+                        current_state = new_state
+                        await websocket.send_text(json.dumps({
+                            "type": "call_state",
+                            "state": new_state.value
+                        }))
+
                 try:
                     async for message in gemini_ws:
                         response = json.loads(message)
-                        
-                        # Audio Handling
+
+                        # Debug: Log all response types from Gemini
+                        keys = list(response.keys())
+                        # Only log interesting events (not every audio chunk)
+                        if keys != ["serverContent"] or "modelTurn" not in response.get("serverContent", {}):
+                            logger.info(f"[GEMINI] Response type: {keys}")
+
+                        # Audio Handling - Harry is talking
                         if "serverContent" in response:
                             model_turn = response["serverContent"].get("modelTurn", {})
                             parts = model_turn.get("parts", [])
+
+                            if parts:
+                                await emit_state(CallState.HARRY_TALKING)
+
                             for part in parts:
                                 if "inlineData" in part:
                                     # Gemini returns PCM. Forward to Web Client.
@@ -537,24 +647,49 @@ async def websocket_web_endpoint(websocket: WebSocket):
                                         "type": "audio",
                                         "audio": b64_data
                                     }))
-                                # Handle text parts (for transcription)
+                                # Handle text parts (for transcription & sentiment extraction)
                                 if "text" in part:
-                                    await websocket.send_text(json.dumps({
-                                        "type": "transcript",
-                                        "role": "assistant",
-                                        "text": part["text"]
-                                    }))
-                        
-                        # Handle input audio transcription
+                                    text_content = part["text"]
+                                    
+                                    # 1. Extract Sentiment
+                                    match = SENTIMENT_PATTERN.search(text_content)
+                                    if match:
+                                        sentiment = match.group(1)
+                                        await websocket.send_text(json.dumps({
+                                            "type": "sentiment",
+                                            "emoji": sentiment
+                                        }))
+                                        # Strip tag
+                                        text_content = SENTIMENT_PATTERN.sub("", text_content)
+
+                                    # 2. Strip Thoughts (Standard [[THOUGHT: ...]])
+                                    text_content = THOUGHT_PATTERN.sub("", text_content)
+
+                                    # 3. Strip Bold Headers (The "leak" we saw: **Initiating...**)
+                                    text_content = BOLD_HEADER_PATTERN.sub("", text_content)
+
+                                    # Clean up whitespace
+                                    text_content = text_content.strip()
+
+                                    if text_content:
+                                        await websocket.send_text(json.dumps({
+                                            "type": "transcript",
+                                            "role": "assistant",
+                                            "text": text_content
+                                        }))
+
+                        # Handle input audio transcription - Customer speaking
                         if "inputAudioTranscription" in response:
                             transcript_text = response["inputAudioTranscription"].get("text", "")
                             if transcript_text:
+                                # Send transcript
                                 await websocket.send_text(json.dumps({
                                     "type": "transcript",
                                     "role": "user",
                                     "text": transcript_text
                                 }))
-                        
+                                await emit_state(CallState.INCOMING)
+
                         # Handle output audio transcription
                         if "outputAudioTranscription" in response:
                             transcript_text = response["outputAudioTranscription"].get("text", "")
@@ -565,8 +700,13 @@ async def websocket_web_endpoint(websocket: WebSocket):
                                     "text": transcript_text
                                 }))
 
+                        # Turn complete - back to listening
+                        if "turnComplete" in response:
+                            await emit_state(CallState.IDLE)
+
                         # Tool Handling (Same logic) - Now with UI notifications
                         if "toolCall" in response:
+                            await emit_state(CallState.PROCESSING)
                             tool_calls = response["toolCall"]["functionCalls"]
                             tool_responses = []
                             for call in tool_calls:
@@ -574,15 +714,32 @@ async def websocket_web_endpoint(websocket: WebSocket):
                                 f_args = call["args"]
                                 call_id = call["id"]
 
-                                # Notify frontend about tool call
-                                await websocket.send_text(json.dumps({
-                                    "type": "tool_call",
-                                    "name": f_name,
-                                    "args": f_args
-                                }))
+                                # Notify frontend about tool call (skip sentiment - it's internal)
+                                if f_name != "report_sentiment":
+                                    await websocket.send_text(json.dumps({
+                                        "type": "tool_call",
+                                        "name": f_name,
+                                        "args": f_args
+                                    }))
 
                                 try:
-                                    if f_name == "identify_customer": result = identify_customer.invoke(f_args)
+                                    if f_name == "report_sentiment":
+                                        # Map sentiment word to emoji and send to frontend
+                                        sentiment_map = {
+                                            "happy": "🙂",
+                                            "neutral": "😐",
+                                            "frustrated": "😠",
+                                            "sad": "😢"
+                                        }
+                                        sentiment = f_args.get("sentiment", "neutral")
+                                        emoji = sentiment_map.get(sentiment, "😐")
+                                        logger.info(f"[SENTIMENT] Web call: {sentiment} -> {emoji}")
+                                        await websocket.send_text(json.dumps({
+                                            "type": "sentiment",
+                                            "emoji": emoji
+                                        }))
+                                        result = "ok"
+                                    elif f_name == "identify_customer": result = identify_customer.invoke(f_args)
                                     elif f_name == "check_werkorder_status": result = check_werkorder_status.invoke(f_args)
                                     elif f_name == "check_part_stock": result = check_part_stock.invoke(f_args)
                                     elif f_name == "schedule_appointment": result = schedule_appointment.invoke(f_args)
@@ -595,12 +752,32 @@ async def websocket_web_endpoint(websocket: WebSocket):
                                 except Exception as e:
                                     result = f"Tool Execution Error: {e}"
 
-                                # Notify frontend about tool result
-                                await websocket.send_text(json.dumps({
-                                    "type": "tool_result",
-                                    "name": f_name,
-                                    "result": str(result)[:200]  # Truncate for UI
-                                }))
+                                # Notify frontend about tool result (skip sentiment - it's internal)
+                                if f_name != "report_sentiment":
+                                    await websocket.send_text(json.dumps({
+                                        "type": "tool_result",
+                                        "name": f_name,
+                                        "result": str(result)[:500]
+                                    }))
+
+                                # Send structured vehicle_data for RDW lookups
+                                if f_name == "lookup_vehicle_rdw" and "Voertuig gevonden" in str(result):
+                                    try:
+                                        kenteken_arg = f_args.get("kenteken", "")
+                                        clean_kt = re.sub(r'[^A-Z0-9]', '', kenteken_arg.upper())
+                                        import httpx
+                                        async with httpx.AsyncClient(timeout=5.0) as http_client:
+                                            rdw_resp = await http_client.get(
+                                                f"http://localhost:8000/api/rdw-lookup/{clean_kt}"
+                                            )
+                                            rdw_data = rdw_resp.json()
+                                            if rdw_data.get("status") == "success":
+                                                await websocket.send_text(json.dumps({
+                                                    "type": "vehicle_data",
+                                                    "data": rdw_data["data"]
+                                                }))
+                                    except Exception as ve:
+                                        logger.error(f"vehicle_data WS send error: {ve}")
 
                                 tool_responses.append({"id": call_id, "name": f_name, "response": {"result": result}})
 
@@ -621,6 +798,8 @@ async def websocket_web_endpoint(websocket: WebSocket):
             for task in pending:
                 task.cancel()
 
+            # Reset sentiment state for next conversation
+        
     except Exception as e:
         logger.error(f"Web Bridge error: {e}")
         await websocket.close()

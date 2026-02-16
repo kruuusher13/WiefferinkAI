@@ -1,16 +1,12 @@
----
-description: 'Start BMAD - the multi-agent workflow system for GarageAI'
----
-
 # BMAD Master Activation
 
 You are now activating the **BMAD (Break Me And Deploy)** multi-agent workflow system for GarageAI.
 
 ## Activation Steps
 
-1. Load the configuration from `_bmad/core/config.yaml`
-2. Load the BMAD Master agent from `_bmad/core/agents/bmad-master.md`
-3. Follow the agent's activation instructions
+1. Read the configuration from `_bmad/core/config.yaml`
+2. Read the BMAD Master agent from `_bmad/core/agents/bmad-master.md`
+3. Follow the agent's activation instructions exactly
 4. Display the menu and wait for user input
 
 ## Quick Reference
@@ -22,6 +18,7 @@ Available agents:
 - 🎙️ **Harry** (Voice) - `/bmad-voice` - Telephony and audio
 - 🗄️ **Pieter** (Database) - `/bmad-db` - WinCar and SQL
 - 🚀 **Barry** (Quick Dev) - `/bmad-quick` - Fast-track development
+- 🔍 **Tessa** (Testing) - `/bmad-test` - QA and verification
 
 Available workflows:
 - `/bmad-feature` - Full feature development

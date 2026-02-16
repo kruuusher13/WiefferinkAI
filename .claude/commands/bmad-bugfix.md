@@ -1,7 +1,3 @@
----
-description: 'Start the Bug Fix workflow'
----
-
 # Bug Fix Workflow
 
 You are starting the **Bug Fix Workflow** for GarageAI.
@@ -16,8 +12,8 @@ REPRODUCE → LOCATE → FIX → VERIFY
 
 ## Activation
 
-1. Load the configuration from `_bmad/core/config.yaml`
-2. Load the workflow from `_bmad/garage/workflows/bug-fix/workflow.md`
+1. Read the configuration from `_bmad/core/config.yaml`
+2. Read the workflow from `_bmad/garage/workflows/bug-fix/workflow.md`
 3. Follow the workflow instructions exactly
 
 ## Workflow Phases

@@ -81,13 +81,41 @@ What database challenge can I help with?
 │  ├── Status (Gepland|In behandeling|Klaar|Gefactureerd)     │
 │  ├── Omschrijving                                           │
 │  └── AanmaakDatum                                           │
+│           │                                                 │
+│           │ 1:N                                             │
+│           ▼                                                 │
+│  Werkplaats_WerkorderRegels (Order Lines)                   │
+│  ├── RegelID (PK)                                           │
+│  ├── WerkorderID (FK)                                       │
+│  ├── Type (ARBEID|ONDERDEEL)                                │
+│  ├── Omschrijving                                           │
+│  └── PrijsPerEenheid                                        │
 │                                                             │
+│  Magazijn_Categorieen (Part Categories)                     │
+│  ├── CategorieID (PK)                                       │
+│  └── Naam                                                   │
+│           │                                                 │
+│           │ 1:N                                             │
+│           ▼                                                 │
 │  Magazijn_Artikelen (Parts Inventory)                       │
 │  ├── ArtikelID (PK)                                         │
+│  ├── CategorieID (FK)                                       │
 │  ├── ArtikelCode                                            │
 │  ├── Omschrijving                                           │
 │  ├── VoorraadAantal                                         │
 │  └── Verkoopprijs                                           │
+│                                                             │
+│  Diensten_Services (Service Menu)                           │
+│  ├── ServiceID (PK)                                         │
+│  ├── ServiceCode (e.g., APK, BEURT-G)                       │
+│  ├── Naam                                                   │
+│  ├── StandaardPrijs                                         │
+│  └── ArbeidUren                                             │
+│                                                             │
+│  Diensten_Tarieven (Labor Rates)                            │
+│  ├── TariefID (PK)                                          │
+│  ├── Naam                                                   │
+│  └── UurTarief                                              │
 │                                                             │
 │  Financieel_Facturen (Invoices)                             │
 │  ├── FactuurID (PK)                                         │

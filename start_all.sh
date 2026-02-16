@@ -1,60 +1,77 @@
 #!/bin/bash
 
-# GarageAI Startup Script (Fool-proof)
+# GarageAI Full-Stack Startup Script
 
-echo "🚗 Starting GarageAI System..."
+echo "Starting GarageAI..."
+
+# 0. Load .env
+if [ -f .env ]; then
+    export $(grep -v '^#' .env | xargs)
+fi
 
 # 1. Check for API Keys
 if [ -z "$GOOGLE_API_KEY" ]; then
-    echo "❌ Error: GOOGLE_API_KEY is not set!"
-    echo "Usage: export GOOGLE_API_KEY='your_key' && ./start_all.sh"
+    echo "Error: GOOGLE_API_KEY is not set."
+    echo "  export GOOGLE_API_KEY='your_key' && ./start_all.sh"
     exit 1
-else
-    echo "✅ Google API Key found."
 fi
+echo "Google API Key: OK"
 
-# 2. Check Docker (DB)
-echo "📦 Checking Database..."
+# 2. Start Database
+echo "Checking database..."
 if ! docker ps | grep -q "wincar_sql"; then
-    echo "⚠️  Database container not found. Starting it..."
+    echo "Starting database container..."
     if ! command -v docker-compose &> /dev/null; then
-         echo "❌ Docker Compose not found. Please install Docker Desktop."
-         exit 1
+        echo "Error: Docker Compose not found. Install Docker Desktop."
+        exit 1
     fi
     docker-compose up -d
-     echo "⏳ Waiting 10s for DB to initialize..."
+    echo "Waiting for DB to initialize..."
     sleep 10
-    echo "🔄 Initializing Schema..."
-    python init_db.py
+    python app/init_db.py
 else
-    echo "✅ Database Container (wincar_sql) is running."
+    echo "Database (wincar_sql): running"
 fi
 
-# 3. Kill old servers
-echo "🧹 Cleaning up old processes..."
+# 3. Kill old processes
+echo "Cleaning up old processes..."
 lsof -i :8000 -t | xargs kill -9 2>/dev/null || true
+lsof -i :3000 -t | xargs kill -9 2>/dev/null || true
 
-# 4. Start Server
-echo "🚀 Starting FastAPI Server on Port 8000..."
-# Run in background
-nohup python main.py > server.log 2>&1 &
-SERVER_PID=$!
-echo "✅ Server started (PID: $SERVER_PID). Logs are in 'server.log'."
+# 4. Start FastAPI backend
+echo "Starting FastAPI backend on :8000..."
+nohup python -m uvicorn bridge.api:app --port 8000 --host 0.0.0.0 > server.log 2>&1 &
+BACKEND_PID=$!
+echo "Backend started (PID: $BACKEND_PID)"
 
-# 5. Ngrok Instructions
+# 5. Start Next.js frontend
+echo "Starting Next.js frontend on :3000..."
+cd garage-ai-command-center
+
+# Install dependencies if node_modules is missing
+if [ ! -d "node_modules" ]; then
+    echo "Installing frontend dependencies (pnpm install)..."
+    pnpm install
+fi
+
+nohup pnpm dev > ../frontend.log 2>&1 &
+FRONTEND_PID=$!
+cd ..
+echo "Frontend started (PID: $FRONTEND_PID)"
+
+# 6. Summary
 echo ""
 echo "=================================================="
-echo "🌐 SYSTEM ONLINE"
+echo "GarageAI ONLINE"
 echo "=================================================="
-echo "1. Your local server is running at http://localhost:8000"
-echo "2. PLEASE RUN NGROK MANUALLY IN A NEW TERMINAL:"
-echo "   ngrok http 8000"
-echo "3. Copy the https URL from ngrok (e.g. https://xyz.ngrok-free.app)"
-echo "4. Paste it into Vapi Dashboard -> Assistant -> Server URL:"
-echo "   <your-ngrok-url>/chat"
+echo "  Dashboard : http://localhost:3000"
+echo "  Backend   : http://localhost:8000"
+echo "  API docs  : http://localhost:8000/docs"
+echo "  Logs      : server.log / frontend.log"
+echo ""
+echo "For Twilio: run  ngrok http 8000  in a new terminal"
 echo "=================================================="
-echo "Press Ctrl+C to stop the server when done."
+echo "Press Ctrl+C to stop all services."
 
-# Keep script running to maintain user focus or handle cleanup
-trap "kill $SERVER_PID" EXIT
-wait $SERVER_PID
+trap "kill $BACKEND_PID $FRONTEND_PID 2>/dev/null" EXIT
+wait $BACKEND_PID
