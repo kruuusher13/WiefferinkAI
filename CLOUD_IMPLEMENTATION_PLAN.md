@@ -17,31 +17,43 @@ Validate GarageAI with a pilot client using a **Unified Google Cloud infrastruct
 
 ---
 
+## 🛡️ Security & Data Safety (GDPR Ready)
+*This section ensures client trust and data integrity.*
+
+1. **Zero Training:** We use the Google Gemini API (Enterprise Tier). Customer data is **not** used to train Google's global models.
+2. **Read-Only Access:** We use a dedicated SQL user that can only *read* data. GarageAI cannot delete or modify WinCar records.
+3. **Encrypted Tunnels:** All communication between the Garage and the Cloud is encrypted via ngrok's TLS tunnel.
+4. **Secret Management:** Sensitive keys are stored in Google Secret Manager, never in the code or logs.
+
+---
+
 ## 🚀 [D] Delivery: Unified Technical Implementation
 
 ### Step 1: Local Data Bridge (The Tunnel)
 On the garage's WinCar server:
-1. Run `ngrok tcp 1433`.
+1. Run `ngrok tcp 1433 --request-header-add "X-Garage-Auth: [RANDOM_KEY]"`.
 2. **Capture:** The Forwarding address (e.g., `0.tcp.eu.ngrok.io:12345`).
 
-### Step 2: Set Environment Variables
+### Step 2: Set Environment Variables & Secrets
 ```bash
+# 1. Store secrets in GCP (Run these once)
+echo -n "your-gemini-key" | gcloud secrets create GEMINI_API_KEY --data-file=-
+echo -n "DRIVER={ODBC Driver 17 for SQL Server};SERVER=[NGROK_URL];DATABASE=WinCarLive;UID=garageai_user;PWD=[PWD]" | gcloud secrets create WINCAR_DB_CONN --data-file=-
+
+# 2. Set project variables
 export PROJECT_ID="your-gcp-project-id"
 export REGION="europe-west4"
-export GOOGLE_API_KEY="your-gemini-key"
-export WINCAR_TUNNEL="0.tcp.eu.ngrok.io:12345"
 ```
 
 ### Step 3: Deploy the Brain (Telephony Bridge)
+We now pull secrets directly from Secret Manager:
 ```bash
-# Build & Deploy Bridge
-gcloud builds submit --tag gcr.io/$PROJECT_ID/garageai-bridge
 gcloud run deploy garageai-bridge \
   --image gcr.io/$PROJECT_ID/garageai-bridge \
   --platform managed \
   --region $REGION \
   --allow-unauthenticated \
-  --set-env-vars "GOOGLE_API_KEY=$GOOGLE_API_KEY,WINCAR_DB_CONNECTION=DRIVER={ODBC Driver 17 for SQL Server};SERVER=$WINCAR_TUNNEL;DATABASE=WinCarLive;UID=sa;PWD=StrongPassword123!"
+  --set-secrets "GOOGLE_API_KEY=GEMINI_API_KEY:latest,WINCAR_DB_CONNECTION=WINCAR_DB_CONN:latest"
 ```
 **Note:** Copy the `Service URL` provided at the end (e.g., `https://bridge-xxx.a.run.app`).
 

@@ -3,7 +3,7 @@ import time
 import os
 
 # Connection string from env var, with local Docker default
-_DEFAULT_MASTER = r"DRIVER={ODBC Driver 17 for SQL Server};SERVER=localhost;DATABASE=master;UID=sa;PWD=StrongPassword123!;Connection Timeout=3"
+_DEFAULT_MASTER = r"DRIVER={ODBC Driver 18 for SQL Server};SERVER=localhost;DATABASE=master;UID=sa;PWD=StrongPassword123!;Connection Timeout=3"
 CONN_STR = os.getenv("WINCAR_DB_MASTER_CONNECTION", _DEFAULT_MASTER)
 
 def wait_for_db():

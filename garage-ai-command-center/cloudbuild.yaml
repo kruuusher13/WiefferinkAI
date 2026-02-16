@@ -1,0 +1,13 @@
+steps:
+  - name: 'gcr.io/cloud-builders/docker'
+    args:
+      - 'build'
+      - '--build-arg'
+      - 'NEXT_PUBLIC_BRIDGE_URL=${_BRIDGE_URL}'
+      - '-t'
+      - 'gcr.io/$PROJECT_ID/garageai-dashboard'
+      - '.'
+images:
+  - 'gcr.io/$PROJECT_ID/garageai-dashboard'
+substitutions:
+  _BRIDGE_URL: 'https://garageai-bridge-1041143034967.europe-west4.run.app'

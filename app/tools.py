@@ -24,7 +24,7 @@ from pydantic import BaseModel, Field
 # --- Database Configuration ---
 DB_CONNECTION_STRING = os.getenv(
     "WINCAR_DB_CONNECTION",
-    r"DRIVER={ODBC Driver 17 for SQL Server};SERVER=localhost;DATABASE=WinCarLive;UID=sa;PWD=StrongPassword123!"
+    r"DRIVER={ODBC Driver 18 for SQL Server};SERVER=localhost;DATABASE=WinCarLive;UID=sa;PWD=StrongPassword123!"
 )
 
 def get_wincar_connection():

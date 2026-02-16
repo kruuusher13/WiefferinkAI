@@ -37,7 +37,7 @@ app.include_router(telephony_router)
 # --- Database Connection (env var with local fallback) ---
 DB_CONN_STR = os.getenv(
     "WINCAR_DB_CONNECTION",
-    r"DRIVER={ODBC Driver 17 for SQL Server};SERVER=localhost;DATABASE=WinCarLive;UID=sa;PWD=StrongPassword123!"
+    r"DRIVER={ODBC Driver 18 for SQL Server};SERVER=localhost;DATABASE=WinCarLive;UID=sa;PWD=StrongPassword123!"
 )
 
 @app.on_event("startup")
