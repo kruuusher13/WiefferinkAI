@@ -19,7 +19,7 @@ app = FastAPI(title="GarageAI WinCar Integration", version="2.0.0")
 
 # CORS — allow dev and production origins
 _cors_origins = ["http://localhost:3000", "http://localhost:8000"]
-_extra_origin = os.getenv("CORS_ORIGIN")  # e.g. https://garageai.vercel.app
+_extra_origin = os.getenv("CORS_ORIGIN")  # e.g. https://garageai-dashboard-xxx-ew.a.run.app
 if _extra_origin:
     _cors_origins.append(_extra_origin)
 

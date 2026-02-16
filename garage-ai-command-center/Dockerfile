@@ -10,6 +10,11 @@ FROM node:20-alpine AS builder
 WORKDIR /app
 COPY --from=deps /app/node_modules ./node_modules
 COPY . .
+
+# NEXT_PUBLIC_ vars must be set at build time for Next.js to inline them
+ARG NEXT_PUBLIC_BRIDGE_URL
+ENV NEXT_PUBLIC_BRIDGE_URL=${NEXT_PUBLIC_BRIDGE_URL}
+
 RUN corepack enable pnpm && pnpm build
 
 # Stage 3: Runner

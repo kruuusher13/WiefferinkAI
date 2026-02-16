@@ -49,15 +49,19 @@ gcloud run deploy garageai-bridge \
 ```bash
 cd garage-ai-command-center
 
-# Build & Deploy Dashboard
-gcloud builds submit --tag gcr.io/$PROJECT_ID/garageai-dashboard
+# Build with bridge URL baked in (Next.js requires NEXT_PUBLIC_ vars at build time)
+gcloud builds submit \
+  --tag gcr.io/$PROJECT_ID/garageai-dashboard \
+  --build-arg NEXT_PUBLIC_BRIDGE_URL=https://bridge-xxx.a.run.app
+
+# Deploy
 gcloud run deploy garageai-dashboard \
   --image gcr.io/$PROJECT_ID/garageai-dashboard \
   --platform managed \
   --region $REGION \
   --allow-unauthenticated \
   --port 3000 \
-  --set-env-vars "NEXT_PUBLIC_BRIDGE_URL=https://bridge-xxx.a.run.app"
+  --memory 512Mi
 ```
 
 ### Step 5: Twilio Integration
