@@ -198,7 +198,9 @@ export const useGarageStore = create<GarageStore>((set, get) => ({
 
     set({ wsStatus: "connecting" })
 
-    const ws = new WebSocket("ws://localhost:8000/ws/web")
+    const bridgeUrl = process.env.NEXT_PUBLIC_BRIDGE_URL || "http://localhost:8000"
+    const wsUrl = bridgeUrl.replace(/^http/, "ws") + "/ws/web"
+    const ws = new WebSocket(wsUrl)
     const audio = new AudioEngine()
     audio.initPlayback()
 

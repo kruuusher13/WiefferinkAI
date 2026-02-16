@@ -11,10 +11,11 @@ const nextConfig = {
     ],
   },
   async rewrites() {
+    const bridgeUrl = process.env.NEXT_PUBLIC_BRIDGE_URL || "http://localhost:8000"
     return [
       {
         source: "/api/:path*",
-        destination: "http://localhost:8000/api/:path*",
+        destination: `${bridgeUrl}/api/:path*`,
       },
     ]
   },

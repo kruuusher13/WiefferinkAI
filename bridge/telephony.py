@@ -765,17 +765,13 @@ async def websocket_web_endpoint(websocket: WebSocket):
                                     try:
                                         kenteken_arg = f_args.get("kenteken", "")
                                         clean_kt = re.sub(r'[^A-Z0-9]', '', kenteken_arg.upper())
-                                        import httpx
-                                        async with httpx.AsyncClient(timeout=5.0) as http_client:
-                                            rdw_resp = await http_client.get(
-                                                f"http://localhost:8000/api/rdw-lookup/{clean_kt}"
-                                            )
-                                            rdw_data = rdw_resp.json()
-                                            if rdw_data.get("status") == "success":
-                                                await websocket.send_text(json.dumps({
-                                                    "type": "vehicle_data",
-                                                    "data": rdw_data["data"]
-                                                }))
+                                        from bridge.api import rdw_lookup
+                                        rdw_data = await rdw_lookup(clean_kt)
+                                        if isinstance(rdw_data, dict) and rdw_data.get("status") == "success":
+                                            await websocket.send_text(json.dumps({
+                                                "type": "vehicle_data",
+                                                "data": rdw_data["data"]
+                                            }))
                                     except Exception as ve:
                                         logger.error(f"vehicle_data WS send error: {ve}")
 

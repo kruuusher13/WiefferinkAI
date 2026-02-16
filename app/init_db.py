@@ -2,14 +2,9 @@ import pyodbc
 import time
 import os
 
-# Connection Settings matching docker-compose
-SERVER = 'localhost'
-DATABASE = 'master' # Connect to master first
-USERNAME = 'sa'
-PASSWORD = 'StrongPassword123!'
-DRIVER = '{ODBC Driver 17 for SQL Server}'
-
-CONN_STR = f'DRIVER={DRIVER};SERVER={SERVER};DATABASE={DATABASE};UID={USERNAME};PWD={PASSWORD};Connection Timeout=3'
+# Connection string from env var, with local Docker default
+_DEFAULT_MASTER = r"DRIVER={ODBC Driver 17 for SQL Server};SERVER=localhost;DATABASE=master;UID=sa;PWD=StrongPassword123!;Connection Timeout=3"
+CONN_STR = os.getenv("WINCAR_DB_MASTER_CONNECTION", _DEFAULT_MASTER)
 
 def wait_for_db():
     retries = 5
@@ -54,17 +49,16 @@ def execute_script(filename):
     with open(file_path, 'r') as f:
         sql_content = f.read()
 
-        
     # Split by simple semicolon logic (naive but works for this seed file)
     commands = sql_content.split(';')
-    
+
     for command in commands:
         if command.strip():
             try:
                 cursor.execute(command)
             except Exception as e:
                 print(f"Error executing command: {command[:50]}...\n{e}")
-                
+
     print("Schema and Seed data applied successfully.")
     conn.close()
 

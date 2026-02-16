@@ -74,7 +74,8 @@ GarageAI/
 |---|---|---|
 | GET | `/` | Health check |
 | GET | `/api/db/{table}` | DB table data for dashboard |
-| POST | `/chat` | LangGraph agent (streaming, Vapi-compatible) |
+| GET | `/api/rdw-lookup/{kenteken}` | RDW vehicle lookup |
+| POST | `/api/werkorder` | Create work order from dashboard |
 | WS | `/ws/web` | Browser WebSocket (PCM 16k/24k) |
 | WS | `/ws/twilio` | Twilio media stream (mu-law 8k) |
 

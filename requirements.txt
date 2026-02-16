@@ -32,8 +32,3 @@ duckduckgo-search
 
 # Database
 pyodbc
-
-# Sentiment Analysis (SenseVoice)
-funasr>=1.0.0
-modelscope>=1.9.0
-torch>=2.0.0

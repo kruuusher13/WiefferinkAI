@@ -33,5 +33,5 @@ ENV PYTHONUNBUFFERED=1
 EXPOSE 8080
 
 # Command to run the application
-# We listen on 0.0.0.0 and port 8080 (standard for Cloud Run)
-CMD ["uvicorn", "bridge.telephony:app", "--host", "0.0.0.0", "--port", "8080"]
+# bridge.api:app includes the telephony WebSocket router
+CMD ["uvicorn", "bridge.api:app", "--host", "0.0.0.0", "--port", "8080"]
