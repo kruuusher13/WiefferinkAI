@@ -121,19 +121,17 @@ export function LiveStream({
             </span>
           )}
         </div>
-        <div className="flex items-center gap-2">
-          <button
-            onClick={onToggleFocus}
-            className="rounded-md p-1 text-muted-foreground transition-colors hover:bg-surface-2 hover:text-foreground"
-            aria-label={isFocused ? "Minimize" : "Maximize"}
-          >
-            {isFocused ? (
-              <Minimize2 className="h-3.5 w-3.5" />
-            ) : (
-              <Maximize2 className="h-3.5 w-3.5" />
-            )}
-          </button>
-        </div>
+        <button
+          onClick={onToggleFocus}
+          className="rounded-md p-1 text-muted-foreground transition-colors hover:bg-surface-2 hover:text-foreground"
+          aria-label={isFocused ? "Minimize" : "Maximize"}
+        >
+          {isFocused ? (
+            <Minimize2 className="h-3.5 w-3.5" />
+          ) : (
+            <Maximize2 className="h-3.5 w-3.5" />
+          )}
+        </button>
       </div>
 
       {/* Transcript */}

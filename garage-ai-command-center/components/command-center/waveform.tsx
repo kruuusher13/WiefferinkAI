@@ -7,9 +7,11 @@ const CYAN = { r: 102, g: 255, b: 255 } // hsl(180, 100%, 70%)
 export function Waveform({
   isActive = true,
   audioLevel = 0,
+  className,
 }: {
   isActive?: boolean
   audioLevel?: number
+  className?: string
 }) {
   const canvasRef = useRef<HTMLCanvasElement>(null)
   const animRef = useRef<number>(0)
@@ -145,7 +147,7 @@ export function Waveform({
   return (
     <canvas
       ref={canvasRef}
-      className="h-10 w-full"
+      className={className || "h-10 w-full"}
       aria-label={isActive ? "Voice activity detected" : "Waiting for voice input"}
     />
   )

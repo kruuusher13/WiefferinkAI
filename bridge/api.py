@@ -1,6 +1,8 @@
 import os
+import json
 import logging
 import httpx
+from pathlib import Path
 from typing import Optional
 from fastapi import FastAPI, HTTPException
 from fastapi.responses import JSONResponse
@@ -13,6 +15,7 @@ logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("GarageAI")
 
 from bridge.telephony import router as telephony_router
+from bridge.state import get_custom_instructions, set_custom_instructions
 
 # --- FastAPI App ---
 app = FastAPI(title="GarageAI WinCar Integration", version="2.0.0")
@@ -254,6 +257,60 @@ async def create_werkorder(payload: WerkorderCreate):
         return JSONResponse(status_code=500, content={"status": "error", "message": str(e)})
     finally:
         conn.close()
+
+
+class CustomInstructionsPayload(BaseModel):
+    instructions: str
+
+@app.get("/api/custom-instructions")
+async def get_instructions():
+    return {"instructions": get_custom_instructions()}
+
+@app.post("/api/custom-instructions")
+async def save_instructions(payload: CustomInstructionsPayload):
+    set_custom_instructions(payload.instructions)
+    return {"status": "success"}
+
+# --- Transcript History ---
+
+TRANSCRIPTS_DIR = Path(__file__).resolve().parent.parent / "transcripts"
+
+@app.get("/api/transcripts")
+async def list_transcripts():
+    """List all saved transcripts, sorted by date descending."""
+    if not TRANSCRIPTS_DIR.exists():
+        return []
+    results = []
+    for f in sorted(TRANSCRIPTS_DIR.glob("*.json"), reverse=True):
+        try:
+            data = json.loads(f.read_text())
+            preview = ""
+            for msg in data.get("transcript", []):
+                if msg.get("role") == "assistant" and msg.get("type") == "speech":
+                    preview = msg["text"][:100]
+                    break
+            results.append({
+                "id": f.stem,
+                "date": data.get("date", ""),
+                "channel": data.get("channel", "unknown"),
+                "duration": data.get("duration", 0),
+                "preview": preview,
+                "message_count": data.get("message_count", 0),
+            })
+        except Exception:
+            continue
+    return results
+
+@app.get("/api/transcripts/{transcript_id}")
+async def get_transcript(transcript_id: str):
+    """Return a full transcript by ID (filename stem)."""
+    filepath = TRANSCRIPTS_DIR / f"{transcript_id}.json"
+    if not filepath.exists():
+        raise HTTPException(status_code=404, detail="Transcript not found")
+    try:
+        return json.loads(filepath.read_text())
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
 
 
 @app.get("/")

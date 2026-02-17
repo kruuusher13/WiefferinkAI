@@ -17,6 +17,8 @@ except ImportError:
 
 from typing import Optional, List, Dict, Any
 import re
+import json
+import time
 from langchain_core.tools import tool
 from langchain_community.tools import DuckDuckGoSearchRun
 from pydantic import BaseModel, Field
@@ -550,3 +552,226 @@ def get_service_price(service_type: str, vehicle_info: Optional[str] = None) -> 
 
     finally:
         conn.close()
+
+# --- Occasions (Car Sales) Tools ---
+
+# Module-level cache for car listings
+_occasions_cache: Dict[str, Any] = {"data": None, "timestamp": 0}
+_CACHE_TTL = 600  # 10 minutes
+
+def _parse_cars_from_html(html: str) -> List[Dict[str, Any]]:
+    """Extract car objects from JSON-LD in an HTML page."""
+    pattern = r'<script\s+type=["\']application/ld\+json["\']\s*>(.*?)</script>'
+    matches = re.findall(pattern, html, re.DOTALL)
+    cars = []
+    for block in matches:
+        try:
+            data = json.loads(block)
+        except json.JSONDecodeError:
+            continue
+        items = data if isinstance(data, list) else [data]
+        for item in items:
+            item_type = item.get("@type", "")
+            if item_type in ("Car", "Vehicle", "Product"):
+                cars.append(item)
+            elif item_type == "ItemList":
+                for elem in item.get("itemListElement", []):
+                    inner = elem.get("item", elem)
+                    cars.append(inner)
+            elif item_type == "SearchResultsPage":
+                main_entity = item.get("mainEntity", {})
+                if main_entity.get("@type") == "ItemList":
+                    for elem in main_entity.get("itemListElement", []):
+                        inner = elem.get("item", elem)
+                        if inner.get("@type") in ("Car", "Vehicle", "Product"):
+                            cars.append(inner)
+    return cars
+
+
+def _fetch_occasions() -> List[Dict[str, Any]]:
+    """Fetch and cache ALL car listings from wiefferink.com/occasions/ (all pages)."""
+    now = time.time()
+    if _occasions_cache["data"] is not None and (now - _occasions_cache["timestamp"]) < _CACHE_TTL:
+        return _occasions_cache["data"]
+
+    if requests is None:
+        return []
+
+    try:
+        # Fetch first page to get total count
+        resp = requests.get("https://www.wiefferink.com/occasions/", timeout=8)
+        resp.raise_for_status()
+        html = resp.text
+
+        cars = _parse_cars_from_html(html)
+
+        # Check for pagination: <meta name="total-count" content="59" />
+        total_match = re.search(r'<meta\s+name="total-count"\s+content="(\d+)"', html)
+        result_match = re.search(r'<meta\s+name="result-count"\s+content="(\d+)"', html)
+
+        if total_match and result_match:
+            total = int(total_match.group(1))
+            per_page = int(result_match.group(1))
+
+            if total > per_page:
+                # Fetch remaining pages
+                pages_needed = (total + per_page - 1) // per_page
+                for page_num in range(2, pages_needed + 1):
+                    try:
+                        page_resp = requests.get(
+                            f"https://www.wiefferink.com/occasions/?page={page_num}",
+                            timeout=8
+                        )
+                        page_resp.raise_for_status()
+                        cars.extend(_parse_cars_from_html(page_resp.text))
+                    except Exception:
+                        break  # Stop on error, return what we have
+
+        _occasions_cache["data"] = cars
+        _occasions_cache["timestamp"] = now
+        return cars
+
+    except Exception as e:
+        # Return cached data if available, even if stale
+        if _occasions_cache["data"] is not None:
+            return _occasions_cache["data"]
+        return []
+
+
+def _extract_car_field(car: Dict, keys: List[str], default: str = "") -> str:
+    """Extract a field from a JSON-LD car object, trying multiple key paths."""
+    for key in keys:
+        val = car.get(key)
+        if val:
+            return str(val) if not isinstance(val, dict) else val.get("name", str(val))
+    return default
+
+
+class SearchCarsInput(BaseModel):
+    budget: Optional[str] = Field(default=None, description="Maximum price in euros (e.g., '15000').")
+    fuel_type: Optional[str] = Field(default=None, description="Fuel type: benzine, diesel, elektrisch, hybride.")
+    brand: Optional[str] = Field(default=None, description="Car brand/make (e.g., 'Volkswagen', 'Toyota').")
+    body_type: Optional[str] = Field(default=None, description="Body type (e.g., 'SUV', 'sedan', 'hatchback').")
+
+
+@tool("search_available_cars", args_schema=SearchCarsInput)
+def search_available_cars(
+    budget: Optional[str] = None,
+    fuel_type: Optional[str] = None,
+    brand: Optional[str] = None,
+    body_type: Optional[str] = None
+) -> str:
+    """
+    Search available used cars (occasions) for sale at Garage Wiefferink.
+    Returns matching cars with brand, model, year, mileage, price, fuel type, and link.
+    Use when customers ask about buying a car, available occasions, or car recommendations.
+    """
+    cars = _fetch_occasions()
+
+    if not cars:
+        return ("Op dit moment kan ik de voorraad niet ophalen. "
+                "Bekijk onze occasions op https://www.wiefferink.com/occasions/ "
+                "of bel ons voor actuele beschikbaarheid.")
+
+    results = []
+    for car in cars:
+        # Extract fields with fallbacks for different JSON-LD schemas
+        car_name = _extract_car_field(car, ["name", "headline", "description"], "Onbekend")
+        car_brand = _extract_car_field(car, ["brand", "manufacturer"], "")
+        car_model = _extract_car_field(car, ["model", "vehicleModelDate"], "")
+
+        # Price extraction
+        price_val = None
+        offers = car.get("offers", car.get("offer", {}))
+        if isinstance(offers, dict):
+            price_str = offers.get("price", offers.get("lowPrice", ""))
+            if price_str:
+                try:
+                    price_val = float(re.sub(r'[^\d.]', '', str(price_str)))
+                except ValueError:
+                    pass
+        elif isinstance(offers, list) and offers:
+            price_str = offers[0].get("price", "")
+            if price_str:
+                try:
+                    price_val = float(re.sub(r'[^\d.]', '', str(price_str)))
+                except ValueError:
+                    pass
+        if price_val is None:
+            price_str = car.get("price", car.get("priceSpecification", {}).get("price", ""))
+            if price_str:
+                try:
+                    price_val = float(re.sub(r'[^\d.]', '', str(price_str)))
+                except ValueError:
+                    pass
+
+        car_fuel = _extract_car_field(car, ["fuelType", "fuel"], "").lower()
+        car_body = _extract_car_field(car, ["bodyType", "vehicleBodyType"], "").lower()
+        car_year = _extract_car_field(car, ["vehicleModelDate", "modelDate", "dateVehicleFirstRegistered"], "")
+        # Extract year portion if it's a date like "2010-06"
+        if car_year and len(car_year) >= 4:
+            car_year = car_year[:4]
+
+        # Mileage can be a QuantitativeValue object or a string
+        car_km_raw = car.get("mileageFromOdometer", "")
+        if isinstance(car_km_raw, dict):
+            car_km = str(car_km_raw.get("value", ""))
+        else:
+            car_km = str(car_km_raw) if car_km_raw else ""
+        if car_km:
+            km_match = re.search(r'[\d]+', car_km.replace(',', '').replace('.', ''))
+            car_km = km_match.group() if km_match else car_km
+
+        car_url = _extract_car_field(car, ["url", "@id"], "https://www.wiefferink.com/occasions/")
+
+        # Apply filters
+        if budget:
+            try:
+                max_price = float(re.sub(r'[^\d.]', '', budget))
+                if price_val is not None and price_val > max_price:
+                    continue
+            except ValueError:
+                pass
+
+        if fuel_type and car_fuel and fuel_type.lower() not in car_fuel:
+            continue
+
+        if brand and car_brand and brand.lower() not in car_brand.lower() and brand.lower() not in car_name.lower():
+            continue
+
+        if body_type and car_body and body_type.lower() not in car_body:
+            continue
+
+        # Format result
+        display_name = car_name if car_name != "Onbekend" else f"{car_brand} {car_model}".strip()
+        line = f"• {display_name}"
+        if car_year:
+            line += f" ({car_year})"
+        if price_val is not None:
+            line += f" - €{price_val:,.0f}"
+        if car_km:
+            line += f" - {car_km} km"
+        if car_fuel:
+            line += f" - {car_fuel}"
+        if car_url:
+            line += f"\n  Link: {car_url}"
+
+        results.append(line)
+
+    if not results:
+        filter_desc = []
+        if budget:
+            filter_desc.append(f"budget €{budget}")
+        if fuel_type:
+            filter_desc.append(fuel_type)
+        if brand:
+            filter_desc.append(brand)
+        if body_type:
+            filter_desc.append(body_type)
+        filter_str = ", ".join(filter_desc) if filter_desc else "deze criteria"
+        return (f"Geen occasions gevonden voor {filter_str}. "
+                f"Bekijk al onze auto's op https://www.wiefferink.com/occasions/ "
+                f"of vraag naar andere opties.")
+
+    header = f"Beschikbare occasions ({len(results)} gevonden):\n\n"
+    return header + "\n\n".join(results[:10])  # Limit to 10 for voice readability

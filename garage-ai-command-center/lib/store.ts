@@ -11,6 +11,12 @@ export interface TranscriptLine {
   keywords?: string[]
 }
 
+export interface ThoughtLine {
+  id: number
+  text: string
+  timestamp: string
+}
+
 export interface VehicleAlert {
   message: string
   severity: "warning" | "info"
@@ -147,6 +153,9 @@ interface GarageStore {
   transcript: TranscriptLine[]
   nextTranscriptId: number
 
+  // Harry's internal thoughts
+  thoughts: ThoughtLine[]
+
   // Vehicle
   vehicleData: Record<string, string> | null
   vehicleAlerts: VehicleAlert[]
@@ -159,6 +168,10 @@ interface GarageStore {
   audioLevel: number
   isMicActive: boolean
 
+  // Custom Instructions
+  customInstructions: string
+  customInstructionsStatus: "idle" | "saving" | "saved" | "error"
+
   // WebSocket + Audio internals
   _ws: WebSocket | null
   _audio: AudioEngine | null
@@ -170,6 +183,8 @@ interface GarageStore {
   sendText: (text: string) => void
   acceptProposal: (id: number) => Promise<void>
   editProposal: (id: number) => void
+  loadCustomInstructions: () => Promise<void>
+  saveCustomInstructions: (text: string) => Promise<void>
 }
 
 let transcriptIdCounter = 0
@@ -183,12 +198,15 @@ export const useGarageStore = create<GarageStore>((set, get) => ({
   sentiment: "😐",
   transcript: [],
   nextTranscriptId: 1,
+  thoughts: [],
   vehicleData: null,
   vehicleAlerts: [],
   proposals: [],
   nextProposalId: 1,
   audioLevel: 0,
   isMicActive: false,
+  customInstructions: "",
+  customInstructionsStatus: "idle",
   _ws: null,
   _audio: null,
 
@@ -210,6 +228,7 @@ export const useGarageStore = create<GarageStore>((set, get) => ({
         callStartTime: Date.now(),
         callState: "idle",
         transcript: [],
+        thoughts: [],
         vehicleData: null,
         vehicleAlerts: [],
         customerName: null,
@@ -256,6 +275,19 @@ export const useGarageStore = create<GarageStore>((set, get) => ({
               fetchRdwLookup(detected, set, get)
             }
           }
+          break
+        }
+
+        case "thought": {
+          const now2 = new Date()
+          const ts2 = `${String(now2.getHours()).padStart(2, "0")}:${String(now2.getMinutes()).padStart(2, "0")}:${String(now2.getSeconds()).padStart(2, "0")}`
+          transcriptIdCounter++
+          set({
+            thoughts: [
+              ...state.thoughts,
+              { id: transcriptIdCounter, text: data.text, timestamp: ts2 },
+            ],
+          })
           break
         }
 
@@ -458,5 +490,41 @@ export const useGarageStore = create<GarageStore>((set, get) => ({
         p.id === id ? { ...p, status: "editing" as const } : p
       ),
     })
+  },
+
+  loadCustomInstructions: async () => {
+    try {
+      const resp = await fetch("/api/custom-instructions")
+      const json = await resp.json()
+      set({ customInstructions: json.instructions || "" })
+    } catch {
+      // Silently fail on load
+    }
+  },
+
+  saveCustomInstructions: async (text: string) => {
+    set({ customInstructionsStatus: "saving" })
+    try {
+      const resp = await fetch("/api/custom-instructions", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ instructions: text }),
+      })
+      const json = await resp.json()
+      if (json.status === "success") {
+        set({ customInstructions: text, customInstructionsStatus: "saved" })
+        // Send update_prompt to active WebSocket session
+        const ws = get()._ws
+        if (ws && ws.readyState === WebSocket.OPEN) {
+          ws.send(JSON.stringify({ type: "update_prompt", prompt: text }))
+        }
+        // Reset status after 2s
+        setTimeout(() => set({ customInstructionsStatus: "idle" }), 2000)
+      } else {
+        set({ customInstructionsStatus: "error" })
+      }
+    } catch {
+      set({ customInstructionsStatus: "error" })
+    }
   },
 }))

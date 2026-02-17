@@ -4,12 +4,15 @@ import { useState, useCallback, useEffect } from "react"
 import { AnimatePresence, motion } from "framer-motion"
 import { StatusBar } from "./status-bar"
 import { LiveStream } from "./live-stream"
+import { HarryThoughts } from "./harry-thoughts"
 import { VehicleContext } from "./vehicle-context"
 import { ActionQueue } from "./action-queue"
 import { VoiceWidget } from "./voice-widget"
+import { CustomInstructions } from "./custom-instructions"
+import { TranscriptHistory } from "./transcript-history"
 import { useGarageStore } from "@/lib/store"
 
-type FocusedPanel = "voice-widget" | "live-stream" | "vehicle-context" | "action-queue" | null
+type FocusedPanel = "voice-widget" | "live-stream" | "harry-thoughts" | "vehicle-context" | "action-queue" | "custom-instructions" | "transcript-history" | null
 
 function useCallTimer() {
   const callStartTime = useGarageStore((s) => s.callStartTime)
@@ -99,6 +102,12 @@ export function CommandCenter() {
                   onToggleFocus={() => toggleFocus("live-stream")}
                 />
               )}
+              {focusedPanel === "harry-thoughts" && (
+                <HarryThoughts
+                  isFocused
+                  onToggleFocus={() => toggleFocus("harry-thoughts")}
+                />
+              )}
               {focusedPanel === "vehicle-context" && (
                 <VehicleContext
                   isFocused
@@ -111,30 +120,40 @@ export function CommandCenter() {
                   onToggleFocus={() => toggleFocus("action-queue")}
                 />
               )}
+              {focusedPanel === "custom-instructions" && (
+                <CustomInstructions
+                  isFocused
+                  onToggleFocus={() => toggleFocus("custom-instructions")}
+                />
+              )}
+              {focusedPanel === "transcript-history" && (
+                <TranscriptHistory
+                  isFocused
+                  onToggleFocus={() => toggleFocus("transcript-history")}
+                />
+              )}
             </motion.div>
           ) : (
-            /* 2x2 bento grid */
+            /* Bento grid: 4 rows x 2 cols */
             <motion.div
               key="grid"
               className="grid h-full gap-3"
               style={{
                 gridTemplateColumns: "1fr 1fr",
-                gridTemplateRows: "1fr 1fr",
+                gridTemplateRows: "2fr 2fr 2fr 1fr",
               }}
               initial={{ opacity: 0, scale: 0.98 }}
               animate={{ opacity: 1, scale: 1 }}
               exit={{ opacity: 0, scale: 0.98 }}
               transition={panelTransition}
             >
-              {/* Voice Widget - top left */}
+              {/* Row 1: Voice Widget + Live Stream (conversation) */}
               <div className="min-h-0">
                 <VoiceWidget
                   isFocused={false}
                   onToggleFocus={() => toggleFocus("voice-widget")}
                 />
               </div>
-
-              {/* Live Stream - top right */}
               <div className="min-h-0">
                 <LiveStream
                   isFocused={false}
@@ -142,7 +161,13 @@ export function CommandCenter() {
                 />
               </div>
 
-              {/* Vehicle Context - bottom left */}
+              {/* Row 2: Harry's Thoughts + Vehicle Context */}
+              <div className="min-h-0">
+                <HarryThoughts
+                  isFocused={false}
+                  onToggleFocus={() => toggleFocus("harry-thoughts")}
+                />
+              </div>
               <div className="min-h-0">
                 <VehicleContext
                   isFocused={false}
@@ -150,11 +175,25 @@ export function CommandCenter() {
                 />
               </div>
 
-              {/* Action Queue - bottom right */}
+              {/* Row 3: Action Queue + Transcript History */}
               <div className="min-h-0">
                 <ActionQueue
                   isFocused={false}
                   onToggleFocus={() => toggleFocus("action-queue")}
+                />
+              </div>
+              <div className="min-h-0">
+                <TranscriptHistory
+                  isFocused={false}
+                  onToggleFocus={() => toggleFocus("transcript-history")}
+                />
+              </div>
+
+              {/* Row 4: Custom Instructions (full width) */}
+              <div className="min-h-0 col-span-2">
+                <CustomInstructions
+                  isFocused={false}
+                  onToggleFocus={() => toggleFocus("custom-instructions")}
                 />
               </div>
             </motion.div>

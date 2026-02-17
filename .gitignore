@@ -27,6 +27,12 @@ garage-ai-command-center/out/
 garage-ai-command-center/tsconfig.tsbuildinfo
 frontend.log
 
+# Custom instructions (user-specific runtime data)
+custom_instructions.json
+
+# Transcripts (runtime conversation data)
+transcripts/
+
 # Test cache
 .pytest_cache/
 

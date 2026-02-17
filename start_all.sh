@@ -4,9 +4,11 @@
 
 echo "Starting GarageAI..."
 
-# 0. Load .env
+# 0. Load .env (supports values with spaces)
 if [ -f .env ]; then
-    export $(grep -v '^#' .env | xargs)
+    set -a
+    source .env
+    set +a
 fi
 
 # 1. Check for API Keys
@@ -40,7 +42,7 @@ lsof -i :3000 -t | xargs kill -9 2>/dev/null || true
 
 # 4. Start FastAPI backend
 echo "Starting FastAPI backend on :8000..."
-nohup python -m uvicorn bridge.api:app --port 8000 --host 0.0.0.0 > server.log 2>&1 &
+nohup python -m uvicorn bridge.api:app --port 8000 --host 0.0.0.0 --reload > server.log 2>&1 &
 BACKEND_PID=$!
 echo "Backend started (PID: $BACKEND_PID)"
 

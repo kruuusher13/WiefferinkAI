@@ -26,6 +26,9 @@ import asyncio
 import logging
 import websockets
 import re
+import difflib
+from datetime import datetime
+from pathlib import Path
 from enum import Enum
 from typing import Optional
 from fastapi import APIRouter, WebSocket, Request, FastAPI
@@ -33,6 +36,7 @@ from fastapi.staticfiles import StaticFiles
 from starlette.websockets import WebSocketDisconnect
 from dotenv import load_dotenv
 from bridge.audio import AudioResampler
+from bridge.state import get_custom_instructions
 
 
 # ============================================
@@ -75,7 +79,8 @@ from app.tools import (
     check_apk_status,
     get_vehicle_recalls,
     web_search,
-    get_service_price  # Added get_service_price
+    get_service_price,
+    search_available_cars
 )
 
 # Gemini Live API Configuration
@@ -85,46 +90,47 @@ GEMINI_MODEL = "models/gemini-2.5-flash-native-audio-preview-12-2025"
 
 # --- System Instruction & Tool Schema (Restored) ---
 SYSTEM_INSTRUCTION = """
-YOU ARE: Harry, a professional and friendly smart assistant for Garage Wiefferink.
+You are Harry, the friendly AI receptionist for Garage Wiefferink. Be concise (max 2 sentences). Be warm and professional.
 
-OBJECTIVE:
-- Greet the user warmly and introduce yourself as Harry.
-- Help customers with questions about APK, service, parts, or appointments.
-- Be concise (max 2 sentences per response).
-- Be helpful and professional.
+RULES:
+- Before EVERY response, silently call report_sentiment with the customer's mood (happy/neutral/frustrated/sad). Never mention sentiment aloud.
+- NEVER say you can't help or that something is unavailable. If you cannot find what the customer needs, say: "Ik kan dat zo snel even niet voor u vinden. Belt u ons gerust terug op 0546-577766, dan helpen mijn collega's u graag verder!" (or English equivalent).
+- Start in Dutch. If the customer speaks English, switch to English. Once set, NEVER switch languages for the rest of the call.
 
-SENTIMENT TRACKING (CRITICAL - DO FIRST):
-- Before EVERY response, call the `report_sentiment` function with the customer's emotional state.
-- This is a SILENT function call - the customer never hears it.
-- NEVER say words like "sentiment", "happy", "frustrated" etc. - just call the function.
-- Valid sentiments: "happy", "neutral", "frustrated", "sad"
+GREETING:
+- Start the conversation immediately with your greeting. Do NOT wait for the customer to speak first.
+- Dutch: "Moin! Ik ben Harry van Garage Wiefferink. Waar kan ik je mee helpen?"
+- English: "Hi! I'm Harry from Garage Wiefferink. How can I help?"
+- Greet ONCE only. Never repeat the greeting.
 
-LANGUAGE RULES:
-- If the user speaks Dutch, YOU MUST SPEAK DUTCH.
-- If the conversation is in Dutch, STAY IN DUTCH until explicitly told to switch.
-- Only switch to English if the user speaks English.
+APPOINTMENT FLOW:
+When scheduling any appointment or test drive, collect info in this EXACT order:
+1. First ask for the customer's NAME ("Mag ik uw naam?")
+2. Then ask for their PHONE NUMBER ("En uw telefoonnummer?")
+3. Only THEN ask for their KENTEKEN / license plate ("Heeft u het kenteken bij de hand?")
+4. If they don't have a kenteken (e.g. test drive for a car from our stock), skip it and proceed.
+5. Offer APK check if kenteken is provided.
+6. Confirm all details before calling schedule_appointment.
+NEVER ask for kenteken first. Always name → phone → kenteken.
 
-APPOINTMENT BOOKING FLOW:
-Before scheduling an appointment, you MUST collect:
-1. Customer name: "Mag ik uw naam?"
-2. Phone number: "En uw telefoonnummer voor bevestiging?"
-3. Kenteken (License Plate): "Om welke auto gaat het? Mag ik het kenteken?"
-4. ASK PERMISSION to check vehicle status: "Zal ik gelijk even de APK status controleren?" -> If yes, call check_apk_status.
-5. Then confirm the appointment details before booking.
+CAR SALES FLOW:
+When a customer asks about buying a car, occasions, or any vehicle for sale:
+1. First, be a good car advisor! Ask about their needs:
+   - "Wat voor auto zoekt u?" (type: SUV, sedan, hatchback, bedrijfswagen?)
+   - "Heeft u een voorkeur voor brandstof?" (benzine, diesel, elektrisch, hybride?)
+   - "Wat is uw budget ongeveer?"
+   - "Waar gaat u de auto vooral voor gebruiken?" (woon-werk, gezin, zakelijk?)
+   Ask 1-2 questions at a time, not all at once.
+2. Once you understand their needs, call search_available_cars with relevant filters (brand, fuel_type, budget).
+3. If they ask about a SPECIFIC car by name (e.g. "Lynk & Co", "BMW i3"), call search_available_cars immediately with that as the brand filter.
+4. Present your top 2-3 recommendations with WHY each car fits their needs. Mention price, year, km.
+5. Proactively suggest alternatives: "En als u iets sportiever wilt..." or "Voor iets zuinigers hebben we ook..."
+6. Offer to schedule a test drive. When they accept, follow the APPOINTMENT FLOW (name → phone → kenteken).
+7. Mention they can view all cars at wiefferink.com/occasions.
+8. If search returns no matches, say you'll check with colleagues and ask the customer to call back.
 
-CALL ENDING - FEEDBACK REQUEST:
-When the customer indicates they are done (says goodbye, "tot ziens", "doei", "dankjewel", "thanks, bye", etc.):
-1. ALWAYS ask for feedback before ending:
-   - Dutch: "Fijn dat ik kon helpen! Mag ik vragen: hoe vond u dit gesprek? Was u tevreden?"
-   - English: "Glad I could help! May I ask: how was this call? Were you satisfied?"
-2. Wait for their response - this feedback is important for quality tracking.
-3. Then say goodbye warmly.
-
-DUTCH GREETING:
-"Moin! Ik ben Harry, de slimme assistent van Garage Wiefferink. Ik kan je helpen bij bijna al je vragen! Zeg het maar, waar kan ik je vandaag mee helpen?"
-
-ENGLISH GREETING:
-"Hello! I'm Harry, the smart assistant for Garage Wiefferink. I can help you with almost any question you have. How can I assist you today?"
+ENDING:
+Before saying goodbye, ask: "Hoe vond u dit gesprek?" (or English equivalent). Wait for feedback, then end warmly.
 """
 
 # Full Schema restoration
@@ -249,14 +255,89 @@ TOOLS_SCHEMA = [
                     },
                     "required": ["service_type"]
                 }
+            },
+            {
+                "name": "search_available_cars",
+                "description": "Search Garage Wiefferink's own car inventory (occasions). ALWAYS use this tool (not web_search) when the customer asks about any car for sale, occasions, a specific car model, or buying a car. This searches our real-time stock of 50+ vehicles.",
+                "parameters": {
+                    "type": "OBJECT",
+                    "properties": {
+                        "budget": {"type": "STRING", "description": "Maximum price in euros (e.g., '15000')"},
+                        "fuel_type": {"type": "STRING", "description": "Fuel type: benzine, diesel, elektrisch, hybride"},
+                        "brand": {"type": "STRING", "description": "Car brand or model name (e.g., 'Volkswagen', 'Lynk', 'BMW i3')"}
+                    }
+                }
             }
         ]
     }
 ]
 
+def _build_system_instruction() -> str:
+    """Build system instruction with any custom instructions appended."""
+    custom = get_custom_instructions()
+    if not custom.strip():
+        return SYSTEM_INSTRUCTION
+    return SYSTEM_INSTRUCTION + "\n\nCUSTOM INSTRUCTIONS FROM GARAGE OWNER (follow these with priority):\n" + custom
+
 # Logger
 logger = logging.getLogger("telephony-bridge")
 logging.basicConfig(level=logging.INFO)
+
+# ============================================
+# TRANSCRIPT SAVING
+# ============================================
+
+TRANSCRIPTS_DIR = Path(__file__).resolve().parent.parent / "transcripts"
+
+def _save_transcript(channel: str, start_time: datetime, transcript: list, tools_used: list, sentiments: list):
+    """Save a conversation transcript to a JSON file."""
+    TRANSCRIPTS_DIR.mkdir(exist_ok=True)
+    filename = f"{start_time.strftime('%Y-%m-%d_%H%M%S')}_{channel}.json"
+    duration_secs = int((datetime.now() - start_time).total_seconds())
+    data = {
+        "id": filename.replace(".json", ""),
+        "channel": channel,
+        "date": start_time.isoformat(),
+        "duration": duration_secs,
+        "message_count": len(transcript),
+        "transcript": transcript,
+        "tools_used": tools_used,
+        "sentiments": sentiments,
+    }
+    (TRANSCRIPTS_DIR / filename).write_text(json.dumps(data, ensure_ascii=False, indent=2, default=str))
+    logger.info(f"Transcript saved: {filename} ({len(transcript)} messages, {duration_secs}s)")
+
+# ============================================
+# LANGUAGE DETECTION
+# ============================================
+
+DUTCH_MARKERS = {"de", "het", "een", "van", "is", "dat", "niet", "voor", "met", "zijn", "op", "aan", "er", "maar", "ook", "nog", "wel", "kan", "zou", "bij", "dit", "die", "wat", "naar", "dan", "mijn", "uw", "je", "jij", "wij", "zij", "ons", "hun", "mij", "hem", "haar", "ik", "goed", "hallo", "dank", "bedankt", "graag", "alstublieft", "ja", "nee", "hoe", "waar", "wanneer", "welke", "moin"}
+
+def _detect_language(text: str) -> Optional[str]:
+    """Detect Dutch vs English from text using word markers. Returns 'Dutch', 'English', or None."""
+    words = set(re.findall(r'\b\w+\b', text.lower()))
+    dutch_count = len(words & DUTCH_MARKERS)
+    if dutch_count >= 2:
+        return "Dutch"
+    if len(words) >= 3 and dutch_count == 0:
+        return "English"
+    return None
+
+# ============================================
+# ANTI-LOOP PROTECTION
+# ============================================
+
+def _is_loop_detected(recent_responses: list[str], threshold: float = 0.8, window: int = 3) -> bool:
+    """Detect if Harry is looping by comparing recent responses for similarity."""
+    if len(recent_responses) < window:
+        return False
+    last_n = recent_responses[-window:]
+    for i in range(len(last_n)):
+        for j in range(i + 1, len(last_n)):
+            ratio = difflib.SequenceMatcher(None, last_n[i], last_n[j]).ratio()
+            if ratio >= threshold:
+                return True
+    return False
 
 @router.websocket("/ws/twilio")
 async def websocket_endpoint(websocket: WebSocket):
@@ -270,7 +351,14 @@ async def websocket_endpoint(websocket: WebSocket):
     resampler = AudioResampler()
     stream_sid = None
 
-    # Reset sentiment state for new call
+    # Session state
+    session_transcript: list[dict] = []
+    session_tools_used: list[dict] = []
+    session_sentiments: list[str] = []
+    session_start = datetime.now()
+    recent_responses: list[str] = []
+    loop_break_attempts = 0
+    current_turn_text = ""
 
     try:
         # Connect to Gemini Live
@@ -282,7 +370,7 @@ async def websocket_endpoint(websocket: WebSocket):
                 "setup": {
                     "model": GEMINI_MODEL,
                     "systemInstruction": {
-                         "parts": [{"text": SYSTEM_INSTRUCTION}]
+                         "parts": [{"text": _build_system_instruction()}]
                     },
                     "tools": TOOLS_SCHEMA,
                     "generation_config": {
@@ -294,7 +382,9 @@ async def websocket_endpoint(websocket: WebSocket):
                                 }
                             }
                         }
-                    }
+                    },
+                    "inputAudioTranscription": {},
+                    "outputAudioTranscription": {}
                 }
             }
             await gemini_ws.send(json.dumps(setup_config))
@@ -343,11 +433,11 @@ async def websocket_endpoint(websocket: WebSocket):
                     logger.error(f"Error in receive_from_twilio: {e}")
 
             async def receive_from_gemini():
-                nonlocal stream_sid
+                nonlocal stream_sid, current_turn_text, loop_break_attempts
                 try:
                     async for message in gemini_ws:
                         response = json.loads(message)
-                        
+
                         if "toolCall" in response:
                             tool_calls = response["toolCall"]["functionCalls"]
                             tool_responses = []
@@ -356,15 +446,17 @@ async def websocket_endpoint(websocket: WebSocket):
                                 f_name = call["name"]
                                 f_args = call["args"]
                                 call_id = call["id"]
-                                
+
                                 logger.info(f"Executing Tool: {f_name} with args: {f_args}")
-                                
-                                # Execute Python function (Restored Real Logic)
+                                session_tools_used.append({"name": f_name, "args": f_args, "timestamp": datetime.now().isoformat()})
+                                session_transcript.append({"role": "system", "text": f"Tool: {f_name}({json.dumps(f_args)})", "timestamp": datetime.now().isoformat(), "type": "tool_call"})
+
+                                # Execute Python function
                                 try:
                                     if f_name == "report_sentiment":
-                                        # Silent sentiment tracking - just log it
                                         sentiment = f_args.get("sentiment", "neutral")
                                         logger.info(f"[SENTIMENT] Twilio call: {sentiment}")
+                                        session_sentiments.append(sentiment)
                                         result = "ok"
                                     elif f_name == "identify_customer":
                                         result = identify_customer.invoke(f_args)
@@ -384,11 +476,14 @@ async def websocket_endpoint(websocket: WebSocket):
                                         result = web_search.invoke(f_args)
                                     elif f_name == "get_service_price":
                                         result = get_service_price.invoke(f_args)
+                                    elif f_name == "search_available_cars":
+                                        result = search_available_cars.invoke(f_args)
                                     else:
                                         result = f"Error: Unknown tool {f_name}"
                                 except Exception as e:
                                     result = f"Tool Execution Error: {e}"
-                                
+
+                                session_transcript.append({"role": "system", "text": f"Result: {str(result)[:200]}", "timestamp": datetime.now().isoformat(), "type": "tool_result"})
                                 tool_responses.append({
                                     "id": call_id,
                                     "name": f_name,
@@ -406,18 +501,17 @@ async def websocket_endpoint(websocket: WebSocket):
                         if "serverContent" in response:
                             model_turn = response["serverContent"].get("modelTurn", {})
                             parts = model_turn.get("parts", [])
-                            
+
                             for part in parts:
                                 if "inlineData" in part:
                                     mime_type = part["inlineData"]["mimeType"]
                                     if mime_type.startswith("audio"):
                                         b64_data = part["inlineData"]["data"]
                                         pcm_data = base64.b64decode(b64_data)
-                                        
+
                                         # Gemini outputs 24kHz PCM - resample to 8kHz mu-law for Twilio
-                                        # CRITICAL: Use pcm_24k_to_mulaw, NOT pcm_to_mulaw (which assumes 16kHz)
                                         mulaw_chunk = resampler.pcm_24k_to_mulaw(pcm_data)
-                                        
+
                                         if stream_sid:
                                             media_message = {
                                                 "event": "media",
@@ -427,30 +521,61 @@ async def websocket_endpoint(websocket: WebSocket):
                                                 }
                                             }
                                             await websocket.send_text(json.dumps(media_message))
-                                
+
                                 # Handle text parts (for transcription & sentiment extraction)
                                 if "text" in part:
                                     text_content = part["text"]
-                                    
+
                                     # 1. Extract Sentiment
                                     match = SENTIMENT_PATTERN.search(text_content)
                                     if match:
                                         sentiment = match.group(1)
                                         logger.info(f"Twilio Call Sentiment: {sentiment}")
-                                        # Strip tag
                                         text_content = SENTIMENT_PATTERN.sub("", text_content)
 
                                     # 2. Strip Thoughts & Headers
                                     text_content = THOUGHT_PATTERN.sub("", text_content)
                                     text_content = BOLD_HEADER_PATTERN.sub("", text_content)
                                     text_content = text_content.strip()
-                                    
-                                    # Note: Twilio doesn't display text, so we just log/clean it internally
-                                    # But if we were sending captions, we'd send `text_content` now.
-                        
+
+                                    # Text parts are Gemini's internal reasoning — only use for loop detection
+                                    if text_content:
+                                        current_turn_text += " " + text_content
+
+                        # Handle input audio transcription — what the CALLER actually said
+                        if "inputAudioTranscription" in response:
+                            transcript_text = response["inputAudioTranscription"].get("text", "")
+                            if transcript_text:
+                                session_transcript.append({"role": "user", "text": transcript_text, "timestamp": datetime.now().isoformat(), "type": "speech"})
+
+                        # Handle output audio transcription — what HARRY actually said
+                        if "outputAudioTranscription" in response:
+                            transcript_text = response["outputAudioTranscription"].get("text", "")
+                            if transcript_text:
+                                session_transcript.append({"role": "assistant", "text": transcript_text, "timestamp": datetime.now().isoformat(), "type": "speech"})
+
                         # Handle TurnComplete
                         if "turnComplete" in response:
-                            pass
+                            turn_text = current_turn_text.strip()
+                            if turn_text:
+                                recent_responses.append(turn_text)
+                                if len(recent_responses) > 5:
+                                    recent_responses.pop(0)
+
+                                # Loop detection — only intervene if truly stuck
+                                if _is_loop_detected(recent_responses):
+                                    loop_break_attempts += 1
+                                    logger.warning(f"[LOOP] Twilio: loop detected (attempt {loop_break_attempts})")
+                                    if loop_break_attempts >= 2:
+                                        goodbye_msg = {
+                                            "client_content": {
+                                                "turns": [{"role": "user", "parts": [{"text": "Excuus, ik verstond u niet goed. Belt u ons gerust terug op 0546-577766. Tot ziens!"}]}],
+                                                "turn_complete": True
+                                            }
+                                        }
+                                        await gemini_ws.send(json.dumps(goodbye_msg))
+
+                            current_turn_text = ""
 
                 except Exception as e:
                     logger.error(f"Error in receive_from_gemini: {e}")
@@ -463,12 +588,17 @@ async def websocket_endpoint(websocket: WebSocket):
                 [task1, task2],
                 return_when=asyncio.FIRST_COMPLETED
             )
-            
+
             for task in pending:
                 task.cancel()
 
-            # Reset sentiment state for next call
-        
+            # Save transcript
+            if session_transcript:
+                try:
+                    _save_transcript("twilio", session_start, session_transcript, session_tools_used, session_sentiments)
+                except Exception as te:
+                    logger.error(f"Failed to save Twilio transcript: {te}")
+
     except Exception as e:
         logger.error(f"Bridge error: {e}")
         await websocket.close()
@@ -481,8 +611,14 @@ async def websocket_web_endpoint(websocket: WebSocket):
     await websocket.accept()
     logger.info("Web Test WebSocket connection accepted")
 
-    # Reset sentiment state for new call
-    logger.info("Using text-based sentiment analysis")
+    # Session state
+    session_transcript: list[dict] = []
+    session_tools_used: list[dict] = []
+    session_sentiments: list[str] = []
+    session_start = datetime.now()
+    recent_responses: list[str] = []
+    loop_break_attempts = 0
+    current_turn_text = ""
 
     try:
         async with websockets.connect(GEMINI_URI) as gemini_ws:
@@ -492,26 +628,28 @@ async def websocket_web_endpoint(websocket: WebSocket):
             setup_config = {
                 "setup": {
                     "model": GEMINI_MODEL,
-                    "systemInstruction": {"parts": [{"text": SYSTEM_INSTRUCTION}]},
+                    "systemInstruction": {"parts": [{"text": _build_system_instruction()}]},
                     "tools": TOOLS_SCHEMA,
                     "generation_config": {
                         "response_modalities": ["AUDIO"],
                         "speech_config": {
                             "voice_config": {"prebuilt_voice_config": {"voice_name": "Fenrir"}}
                         }
-                    }
+                    },
+                    "inputAudioTranscription": {},
+                    "outputAudioTranscription": {}
                 }
             }
             await gemini_ws.send(json.dumps(setup_config))
             logger.info("Sent Gemini setup config")
 
             # --- TRIGGER INITIAL GREETING ---
-            # Send an initial message to the AI to start the conversation
+            # Send a short prompt to make Harry greet first
             initial_msg = {
                 "client_content": {
                     "turns": [{
                         "role": "user",
-                        "parts": [{"text": "Please introduce yourself and greet me in the current language."}]
+                        "parts": [{"text": "Hallo"}]
                     }],
                     "turn_complete": True
                 }
@@ -609,7 +747,7 @@ async def websocket_web_endpoint(websocket: WebSocket):
                     logger.error(f"Error in receive_from_web: {e}")
 
             async def receive_from_gemini():
-                nonlocal last_sent_sentiment
+                nonlocal last_sent_sentiment, current_turn_text, loop_break_attempts
                 current_state = CallState.IDLE
 
                 async def emit_state(new_state: CallState):
@@ -627,7 +765,6 @@ async def websocket_web_endpoint(websocket: WebSocket):
 
                         # Debug: Log all response types from Gemini
                         keys = list(response.keys())
-                        # Only log interesting events (not every audio chunk)
                         if keys != ["serverContent"] or "modelTurn" not in response.get("serverContent", {}):
                             logger.info(f"[GEMINI] Response type: {keys}")
 
@@ -641,17 +778,15 @@ async def websocket_web_endpoint(websocket: WebSocket):
 
                             for part in parts:
                                 if "inlineData" in part:
-                                    # Gemini returns PCM. Forward to Web Client.
                                     b64_data = part["inlineData"]["data"]
                                     await websocket.send_text(json.dumps({
                                         "type": "audio",
                                         "audio": b64_data
                                     }))
-                                # Handle text parts (for transcription & sentiment extraction)
                                 if "text" in part:
                                     text_content = part["text"]
-                                    
-                                    # 1. Extract Sentiment
+
+                                    # 1. Extract Sentiment (from text tags)
                                     match = SENTIMENT_PATTERN.search(text_content)
                                     if match:
                                         sentiment = match.group(1)
@@ -659,30 +794,27 @@ async def websocket_web_endpoint(websocket: WebSocket):
                                             "type": "sentiment",
                                             "emoji": sentiment
                                         }))
-                                        # Strip tag
                                         text_content = SENTIMENT_PATTERN.sub("", text_content)
 
-                                    # 2. Strip Thoughts (Standard [[THOUGHT: ...]])
+                                    # 2. Strip Thoughts & Bold Headers
                                     text_content = THOUGHT_PATTERN.sub("", text_content)
-
-                                    # 3. Strip Bold Headers (The "leak" we saw: **Initiating...**)
                                     text_content = BOLD_HEADER_PATTERN.sub("", text_content)
-
-                                    # Clean up whitespace
                                     text_content = text_content.strip()
 
+                                    # Text parts are Gemini's internal reasoning
+                                    # Send as "thought" (separate from speech transcript)
                                     if text_content:
+                                        current_turn_text += " " + text_content
                                         await websocket.send_text(json.dumps({
-                                            "type": "transcript",
-                                            "role": "assistant",
+                                            "type": "thought",
                                             "text": text_content
                                         }))
 
-                        # Handle input audio transcription - Customer speaking
+                        # Handle input audio transcription - What the CALLER actually said
                         if "inputAudioTranscription" in response:
                             transcript_text = response["inputAudioTranscription"].get("text", "")
                             if transcript_text:
-                                # Send transcript
+                                session_transcript.append({"role": "user", "text": transcript_text, "timestamp": datetime.now().isoformat(), "type": "speech"})
                                 await websocket.send_text(json.dumps({
                                     "type": "transcript",
                                     "role": "user",
@@ -694,6 +826,7 @@ async def websocket_web_endpoint(websocket: WebSocket):
                         if "outputAudioTranscription" in response:
                             transcript_text = response["outputAudioTranscription"].get("text", "")
                             if transcript_text:
+                                session_transcript.append({"role": "assistant", "text": transcript_text, "timestamp": datetime.now().isoformat(), "type": "speech"})
                                 await websocket.send_text(json.dumps({
                                     "type": "transcript",
                                     "role": "assistant",
@@ -704,7 +837,28 @@ async def websocket_web_endpoint(websocket: WebSocket):
                         if "turnComplete" in response:
                             await emit_state(CallState.IDLE)
 
-                        # Tool Handling (Same logic) - Now with UI notifications
+                            turn_text = current_turn_text.strip()
+                            if turn_text:
+                                recent_responses.append(turn_text)
+                                if len(recent_responses) > 5:
+                                    recent_responses.pop(0)
+
+                                # Loop detection — only intervene if truly stuck
+                                if _is_loop_detected(recent_responses):
+                                    loop_break_attempts += 1
+                                    logger.warning(f"[LOOP] Web: loop detected (attempt {loop_break_attempts})")
+                                    if loop_break_attempts >= 2:
+                                        goodbye_msg = {
+                                            "client_content": {
+                                                "turns": [{"role": "user", "parts": [{"text": "Excuus, ik verstond u niet goed. Belt u ons gerust terug op 0546-577766. Tot ziens!"}]}],
+                                                "turn_complete": True
+                                            }
+                                        }
+                                        await gemini_ws.send(json.dumps(goodbye_msg))
+
+                            current_turn_text = ""
+
+                        # Tool Handling - Now with UI notifications + transcript collection
                         if "toolCall" in response:
                             await emit_state(CallState.PROCESSING)
                             tool_calls = response["toolCall"]["functionCalls"]
@@ -714,7 +868,10 @@ async def websocket_web_endpoint(websocket: WebSocket):
                                 f_args = call["args"]
                                 call_id = call["id"]
 
-                                # Notify frontend about tool call (skip sentiment - it's internal)
+                                session_tools_used.append({"name": f_name, "args": f_args, "timestamp": datetime.now().isoformat()})
+                                session_transcript.append({"role": "system", "text": f"Tool: {f_name}({json.dumps(f_args)})", "timestamp": datetime.now().isoformat(), "type": "tool_call"})
+
+                                # Notify frontend about tool call (skip sentiment)
                                 if f_name != "report_sentiment":
                                     await websocket.send_text(json.dumps({
                                         "type": "tool_call",
@@ -724,7 +881,6 @@ async def websocket_web_endpoint(websocket: WebSocket):
 
                                 try:
                                     if f_name == "report_sentiment":
-                                        # Map sentiment word to emoji and send to frontend
                                         sentiment_map = {
                                             "happy": "🙂",
                                             "neutral": "😐",
@@ -734,6 +890,7 @@ async def websocket_web_endpoint(websocket: WebSocket):
                                         sentiment = f_args.get("sentiment", "neutral")
                                         emoji = sentiment_map.get(sentiment, "😐")
                                         logger.info(f"[SENTIMENT] Web call: {sentiment} -> {emoji}")
+                                        session_sentiments.append(sentiment)
                                         await websocket.send_text(json.dumps({
                                             "type": "sentiment",
                                             "emoji": emoji
@@ -748,11 +905,14 @@ async def websocket_web_endpoint(websocket: WebSocket):
                                     elif f_name == "get_vehicle_recalls": result = get_vehicle_recalls.invoke(f_args)
                                     elif f_name == "web_search": result = web_search.invoke(f_args)
                                     elif f_name == "get_service_price": result = get_service_price.invoke(f_args)
+                                    elif f_name == "search_available_cars": result = search_available_cars.invoke(f_args)
                                     else: result = f"Error: Unknown tool {f_name}"
                                 except Exception as e:
                                     result = f"Tool Execution Error: {e}"
 
-                                # Notify frontend about tool result (skip sentiment - it's internal)
+                                session_transcript.append({"role": "system", "text": f"Result: {str(result)[:200]}", "timestamp": datetime.now().isoformat(), "type": "tool_result"})
+
+                                # Notify frontend about tool result (skip sentiment)
                                 if f_name != "report_sentiment":
                                     await websocket.send_text(json.dumps({
                                         "type": "tool_result",
@@ -790,12 +950,17 @@ async def websocket_web_endpoint(websocket: WebSocket):
                 [task1, task2],
                 return_when=asyncio.FIRST_COMPLETED
             )
-            
+
             for task in pending:
                 task.cancel()
 
-            # Reset sentiment state for next conversation
-        
+            # Save transcript
+            if session_transcript:
+                try:
+                    _save_transcript("web", session_start, session_transcript, session_tools_used, session_sentiments)
+                except Exception as te:
+                    logger.error(f"Failed to save Web transcript: {te}")
+
     except Exception as e:
         logger.error(f"Web Bridge error: {e}")
         await websocket.close()

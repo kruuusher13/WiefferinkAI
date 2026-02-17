@@ -67,3 +67,21 @@ agent_settings:
     - "Detect emergencies (burning smell, brake failure)"
     - "Never give medical/legal advice"
     - "Escalate to human for complex issues"
+
+# Workflow Settings
+workflows:
+  project_health:
+    name: "Project Health & Release"
+    description: "Test, document, optimize, and push changes in parallel"
+    icon: "🚀"
+    version: "1.0.0"
+    parallel_mode: true
+    timeout_minutes: 15
+    approval_required_for_push: true
+    agents:
+      - tessa      # Testing
+      - willem     # Documentation
+      - sophie     # Optimization
+      - barry      # Git Push
+    skill_command: "project-health"
+    enabled: true

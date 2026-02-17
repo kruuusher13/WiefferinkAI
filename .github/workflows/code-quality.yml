@@ -1,0 +1,174 @@
+name: Code Quality
+
+on:
+  pull_request:
+    branches: [ main, develop ]
+
+jobs:
+  quality:
+    runs-on: ubuntu-latest
+    name: Code Quality Checks
+
+    steps:
+    - uses: actions/checkout@v4
+      with:
+        fetch-depth: 0
+
+    - name: Set up Python 3.12
+      uses: actions/setup-python@v4
+      with:
+        python-version: '3.12'
+        cache: 'pip'
+
+    - name: Install dependencies
+      run: |
+        python -m pip install --upgrade pip
+        pip install black pylint flake8 mypy bandit
+
+    # Check code formatting
+    - name: Check formatting with Black
+      id: black
+      run: |
+        echo "Checking code formatting..."
+        black --check app/ bridge/ tests/ --diff > /tmp/black-diff.txt || {
+          echo "❌ Code formatting issues found:"
+          cat /tmp/black-diff.txt
+          echo "format_ok=false" >> $GITHUB_OUTPUT
+          exit 1
+        }
+        echo "✅ Code formatting is correct"
+        echo "format_ok=true" >> $GITHUB_OUTPUT
+
+    # Lint Python code
+    - name: Lint with Pylint
+      id: pylint
+      run: |
+        echo "Running pylint..."
+        pylint app/ bridge/ --max-line-length=120 --disable=C0111,C0103 --exit-zero > /tmp/pylint.txt || true
+        cat /tmp/pylint.txt
+        echo "pylint_done=true" >> $GITHUB_OUTPUT
+
+    # Additional linting
+    - name: Lint with Flake8
+      id: flake8
+      run: |
+        echo "Running flake8..."
+        flake8 app/ bridge/ --max-line-length=120 --ignore=E501,W503 --exit-zero > /tmp/flake8.txt || true
+        cat /tmp/flake8.txt
+        echo "flake8_done=true" >> $GITHUB_OUTPUT
+
+    # Type checking
+    - name: Type check with Mypy
+      id: mypy
+      run: |
+        echo "Running mypy..."
+        mypy app/ bridge/ --ignore-missing-imports --exit-zero > /tmp/mypy.txt || true
+        cat /tmp/mypy.txt
+        echo "mypy_done=true" >> $GITHUB_OUTPUT
+
+    # Security scanning
+    - name: Security check with Bandit
+      id: bandit
+      run: |
+        echo "Running bandit security scanner..."
+        bandit -r app/ bridge/ -f json -o /tmp/bandit.json --exit-zero
+        cat /tmp/bandit.json | python -m json.tool || true
+        echo "bandit_done=true" >> $GITHUB_OUTPUT
+
+    # Complexity check
+    - name: Check code complexity
+      id: complexity
+      run: |
+        echo "Checking code complexity..."
+        pip install radon
+        radon cc app/ bridge/ -a -s > /tmp/complexity.txt || true
+        cat /tmp/complexity.txt
+        echo "complexity_done=true" >> $GITHUB_OUTPUT
+
+    # Dead code detection
+    - name: Find dead code
+      id: vulture
+      run: |
+        echo "Checking for dead code..."
+        pip install vulture
+        vulture app/ bridge/ --min-confidence 80 > /tmp/vulture.txt || true
+        cat /tmp/vulture.txt
+        echo "vulture_done=true" >> $GITHUB_OUTPUT
+
+    # Dependency audit
+    - name: Audit dependencies
+      id: audit
+      run: |
+        echo "Auditing dependencies..."
+        pip install pip-audit
+        pip-audit --desc --exit-code 0 > /tmp/audit.txt || true
+        cat /tmp/audit.txt
+        echo "audit_done=true" >> $GITHUB_OUTPUT
+
+    # Generate PR comment
+    - name: Comment Quality Report on PR
+      if: always()
+      uses: actions/github-script@v7
+      with:
+        github-token: ${{ secrets.GITHUB_TOKEN }}
+        script: |
+          const fs = require('fs');
+
+          let comment = '## 📊 Code Quality Report\n\n';
+          comment += '| Check | Status |\n';
+          comment += '|-------|--------|\n';
+
+          // Format check
+          const formatOk = '${{ steps.black.outputs.format_ok }}' === 'true';
+          comment += `| 🎨 Formatting (Black) | ${formatOk ? '✅ PASS' : '❌ FAIL'} |\n`;
+
+          comment += `| 📝 Linting (Pylint) | ✅ Checked |\n`;
+          comment += `| 📝 Linting (Flake8) | ✅ Checked |\n`;
+          comment += `| 🔍 Type Checking (Mypy) | ✅ Checked |\n`;
+          comment += `| 🔒 Security (Bandit) | ✅ Checked |\n`;
+          comment += `| 📈 Complexity | ✅ Checked |\n`;
+          comment += `| 💀 Dead Code (Vulture) | ✅ Checked |\n`;
+          comment += `| 📦 Dependencies | ✅ Audited |\n`;
+
+          comment += '\n<details><summary>Detailed Results</summary>\n\n';
+
+          // Add details
+          if (fs.existsSync('/tmp/black-diff.txt')) {
+            const blackDiff = fs.readFileSync('/tmp/black-diff.txt', 'utf8');
+            if (blackDiff.trim()) {
+              comment += '### Black Formatting Issues\n```\n' + blackDiff + '\n```\n\n';
+            }
+          }
+
+          if (fs.existsSync('/tmp/bandit.json')) {
+            try {
+              const bandit = JSON.parse(fs.readFileSync('/tmp/bandit.json', 'utf8'));
+              if (bandit.results && bandit.results.length > 0) {
+                comment += '### Security Issues Found\n';
+                bandit.results.forEach(issue => {
+                  comment += `- **${issue.test_id}** (${issue.severity}): ${issue.issue_text}\n`;
+                });
+                comment += '\n';
+              }
+            } catch (e) {
+              console.log('Could not parse bandit results');
+            }
+          }
+
+          comment += '</details>\n\n';
+          comment += '💡 _Run `black . && pylint app/ bridge/` locally to fix formatting issues._';
+
+          github.rest.issues.createComment({
+            issue_number: context.issue.number,
+            owner: context.repo.owner,
+            repo: context.repo.repo,
+            body: comment
+          });
+
+    # Block merge if formatting fails
+    - name: Fail if formatting issues
+      if: steps.black.outputs.format_ok == 'false'
+      run: |
+        echo "❌ Code formatting issues found!"
+        echo "Run: black app/ bridge/ tests/"
+        exit 1
