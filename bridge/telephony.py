@@ -90,7 +90,6 @@ LANGUAGE RULES (STRICT):
 - The ONLY exception: the initial greeting is always in Dutch.
 
 RULES:
-- Before EVERY response, silently call report_sentiment with the customer's mood (happy/neutral/frustrated/sad). Never mention sentiment aloud.
 - NEVER say you can't help or that something is unavailable. If you cannot find what the customer needs:
   - Dutch: "Ik kan dat zo snel even niet voor u vinden. Belt u ons gerust terug op 0546-577766, dan helpen mijn collega's u graag verder!"
   - English: "I can't find that right now. Please call us back at 0546-577766 and my colleagues will be happy to help!"
@@ -145,21 +144,6 @@ Before saying goodbye, ask: "Hoe vond u dit gesprek?" / "How did you find this c
 TOOLS_SCHEMA = [
     {
         "function_declarations": [
-            {
-                "name": "report_sentiment",
-                "description": "Report the detected customer sentiment. Call this ONCE at the start of EVERY response BEFORE speaking. This is silent and invisible to the customer.",
-                "parameters": {
-                    "type": "OBJECT",
-                    "properties": {
-                        "sentiment": {
-                            "type": "STRING",
-                            "enum": ["happy", "neutral", "frustrated", "sad"],
-                            "description": "The customer's current emotional state"
-                        }
-                    },
-                    "required": ["sentiment"]
-                }
-            },
             {
                 "name": "lookup_vehicle_rdw",
                 "description": "Look up vehicle info by kenteken (Dutch license plate) from RDW database. Returns make, model, year, fuel type, and APK expiry.",
