@@ -72,6 +72,15 @@ async def new_endpoint(param: str):
         return {"status": "error", "message": str(e)}
 ```
 
+## Changelog
+
+### 2026-03-04
+- **Dashboard live monitoring**: Dashboard auto-connects in monitor mode on page load. All Twilio call data (transcripts, tool calls, vehicle data, sentiment) streams to the dashboard in real time.
+- **Takeover from dashboard**: Owner can take over a live Twilio call from the dashboard (Take Over / Return to Harry).
+- **Harry answers immediately**: Removed 15s ringing window — Harry picks up Twilio calls instantly with a greeting.
+- **Async tool execution**: Tools run in `asyncio.to_thread()` to prevent blocking the WebSocket event loop (fixes call drops during tool use like `search_available_cars`).
+- **Greeting trigger for Twilio**: Added explicit greeting trigger so Harry greets callers immediately instead of waiting for audio input.
+
 ## Constraints
 
 1. **Latency**: 800ms total (200ms network + 400ms Gemini + 200ms code)

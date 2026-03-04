@@ -239,21 +239,19 @@ torxflow/
 6. Owner reviews proposal in Action Queue panel → clicks Accept
 7. Google Calendar event created + confirmation email sent to customer
 
-### Live Call Monitoring & Ringing
+### Live Call Monitoring
 
 The dashboard auto-connects in **monitor mode** on page load, streaming all Twilio call data live:
 
-1. Phone call arrives → dashboard shows pulsing **Answer Call** button
-2. Owner has **15 seconds** to answer before Harry auto-picks up
-3. If owner clicks Answer → direct takeover (Gemini never connects)
-4. If timeout → Harry greets the caller, all transcripts/tools/vehicle data stream to dashboard in real time
-5. During any active call, owner can click **Take Over** to intervene
+1. Phone call arrives → Harry answers immediately and greets the caller
+2. All transcripts, tool calls, vehicle data, and sentiment stream to the dashboard in real time
+3. During any active call, owner can click **Take Over** to intervene
 
 ### Takeover Mode
 
 The garage owner can take over a live Twilio call:
 
-1. Click **Take Over** in the nav bar (or answer an incoming call)
+1. Click **Take Over** in the nav bar during an active call
 2. Harry goes silent (Gemini suppressed), owner speaks directly to the customer
 3. Owner's mic audio is resampled (16kHz PCM → 8kHz µ-law) and forwarded to Twilio
 4. Click **Return to Harry** to hand the conversation back
