@@ -3,7 +3,7 @@
 import { useEffect } from "react"
 import Link from "next/link"
 import { usePathname } from "next/navigation"
-import { Headphones, PhoneOff, Phone, Calendar, X } from "lucide-react"
+import { Headphones, PhoneOff, Calendar, X } from "lucide-react"
 import { useGarageStore } from "@/lib/store"
 
 function TorxFlowLogo() {
@@ -33,7 +33,6 @@ export function Nav() {
   const connect = useGarageStore((s) => s.connect)
   const disconnect = useGarageStore((s) => s.disconnect)
   const connectMonitor = useGarageStore((s) => s.connectMonitor)
-  const answerCall = useGarageStore((s) => s.answerCall)
   const startTakeover = useGarageStore((s) => s.startTakeover)
   const stopTakeover = useGarageStore((s) => s.stopTakeover)
   const isTakeover = useGarageStore((s) => s.isTakeover)
@@ -110,17 +109,6 @@ export function Nav() {
             <Calendar className="h-3.5 w-3.5" />
             Connect Calendar
           </a>
-        )}
-
-        {/* Incoming call — pulsing Answer button */}
-        {callState === "incoming" && (
-          <button
-            onClick={answerCall}
-            className="flex items-center gap-1.5 rounded-full bg-emerald-500 px-4 py-1.5 text-xs font-medium text-white shadow-sm transition-colors hover:bg-emerald-600 animate-pulse"
-          >
-            <Phone className="h-3.5 w-3.5" />
-            Answer Call
-          </button>
         )}
 
         {/* Harry is on a call — show status + takeover controls */}

@@ -45,7 +45,6 @@ from bridge.state import get_custom_instructions
 
 class CallState(str, Enum):
     IDLE = "idle"
-    INCOMING = "incoming"
     HARRY_TALKING = "harry_talking"
     PROCESSING = "processing"
     TAKEOVER = "takeover"
@@ -376,84 +375,17 @@ async def websocket_endpoint(websocket: WebSocket):
         logger.error(f"Twilio WS closed before start: {e}")
         return
 
-    # Register session early (before Gemini connects)
+    # Register session
     _active_sessions["twilio"] = {
         "twilio_ws": websocket,
         "gemini_ws": None,
         "takeover": False,
-        "answered_by_owner": False,
         "stream_sid": stream_sid,
     }
 
-    # --- 15-second ringing window ---
-    await _broadcast({"type": "call_state", "state": "incoming"})
-    logger.info("[RINGING] Broadcasting incoming call to monitors")
-
-    RING_TIMEOUT = 15.0
-    POLL_INTERVAL = 0.5
-    media_buffer: list[dict] = []
-    owner_answered = False
-
-    async def _buffer_media():
-        """Buffer Twilio media events during ringing."""
-        try:
-            while True:
-                msg = await websocket.receive_text()
-                d = json.loads(msg)
-                if d.get("event") == "media":
-                    media_buffer.append(d)
-                elif d.get("event") == "stop":
-                    break
-        except (WebSocketDisconnect, Exception):
-            pass
-
-    buffer_task = asyncio.create_task(_buffer_media())
-
-    elapsed = 0.0
-    while elapsed < RING_TIMEOUT:
-        await asyncio.sleep(POLL_INTERVAL)
-        elapsed += POLL_INTERVAL
-        session = _active_sessions.get("twilio")
-        if not session:
-            break
-        if session.get("answered_by_owner"):
-            owner_answered = True
-            logger.info("[RINGING] Owner answered the call")
-            break
-
-    buffer_task.cancel()
-    try:
-        await buffer_task
-    except asyncio.CancelledError:
-        pass
-
-    # Check if call is still alive
-    if "twilio" not in _active_sessions:
-        return
-
-    if owner_answered:
-        # Owner takes over directly — set takeover mode, skip Gemini
-        _active_sessions["twilio"]["takeover"] = True
-        await _broadcast({"type": "call_state", "state": "takeover"})
-        logger.info("[RINGING] Owner takeover — forwarding buffered audio not needed (owner will speak)")
-
-        # Keep connection open for owner audio forwarding — just receive and discard Twilio audio
-        # The /ws/web monitor handler forwards takeover_audio to this Twilio WS
-        try:
-            while True:
-                msg = await websocket.receive_text()
-                d = json.loads(msg)
-                if d.get("event") == "stop":
-                    break
-        except (WebSocketDisconnect, Exception):
-            pass
-        finally:
-            await _broadcast({"type": "call_state", "state": "idle"})
-            _active_sessions.pop("twilio", None)
-        return
-
-    # --- Harry auto-answers: connect Gemini ---
+    # Harry answers immediately — broadcast to monitors
     await _broadcast({"type": "call_state", "state": "harry_talking"})
+    logger.info("[CALL] Harry answering Twilio call immediately")
 
     try:
         async with websockets.connect(GEMINI_URI) as gemini_ws:
@@ -485,22 +417,18 @@ async def websocket_endpoint(websocket: WebSocket):
             await gemini_ws.send(json.dumps(setup_config))
             logger.info("Sent setup config to Gemini")
 
-            # Send buffered media to Gemini
-            for buffered in media_buffer:
-                payload = buffered["media"]["payload"]
-                chunk = base64.b64decode(payload)
-                pcm_data = resampler.mulaw_to_pcm(chunk)
-                realtime_input = {
-                    "realtime_input": {
-                        "media_chunks": [{
-                            "mime_type": "audio/pcm",
-                            "data": base64.b64encode(pcm_data).decode("utf-8")
-                        }]
-                    }
+            # Trigger Harry's greeting immediately
+            initial_msg = {
+                "client_content": {
+                    "turns": [{
+                        "role": "user",
+                        "parts": [{"text": "START: Een nieuwe klant belt. Begroet de klant nu met je standaard begroeting."}]
+                    }],
+                    "turn_complete": True
                 }
-                await gemini_ws.send(json.dumps(realtime_input))
-            logger.info(f"Forwarded {len(media_buffer)} buffered media chunks to Gemini")
-            media_buffer.clear()
+            }
+            await gemini_ws.send(json.dumps(initial_msg))
+            logger.info("Triggered initial AI greeting for Twilio call")
 
             async def receive_from_twilio():
                 nonlocal stream_sid
@@ -692,8 +620,6 @@ async def websocket_endpoint(websocket: WebSocket):
                                 await _broadcast({"type": "transcript", "role": "assistant", "text": full_text})
                                 pending_assistant_transcript = ""
 
-                            await _broadcast({"type": "call_state", "state": "idle"})
-
                             turn_text = current_turn_text.strip()
                             if turn_text:
                                 recent_responses.append(turn_text)
@@ -765,8 +691,6 @@ async def websocket_web_endpoint(websocket: WebSocket):
                 await websocket.send_text(json.dumps({"type": "call_state", "state": "takeover"}))
             elif twilio_session.get("gemini_ws"):
                 await websocket.send_text(json.dumps({"type": "call_state", "state": "harry_talking"}))
-            elif not twilio_session.get("answered_by_owner") and not twilio_session.get("gemini_ws"):
-                await websocket.send_text(json.dumps({"type": "call_state", "state": "incoming"}))
 
         try:
             while True:
@@ -774,14 +698,7 @@ async def websocket_web_endpoint(websocket: WebSocket):
                 data = json.loads(msg)
                 msg_type = data.get("type")
 
-                if msg_type == "answer_call":
-                    session = _active_sessions.get("twilio")
-                    if session and not session.get("answered_by_owner") and not session.get("gemini_ws"):
-                        session["answered_by_owner"] = True
-                        session["takeover"] = True
-                        logger.info("[MONITOR] Owner answered incoming call")
-
-                elif msg_type == "takeover":
+                if msg_type == "takeover":
                     action = data.get("action")
                     twilio_session = _active_sessions.get("twilio")
                     if action == "start" and twilio_session:

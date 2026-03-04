@@ -41,7 +41,7 @@ export interface ActionProposal {
 }
 
 type WsStatus = "disconnected" | "connecting" | "connected"
-type CallState = "idle" | "incoming" | "harry_talking" | "processing" | "takeover"
+type CallState = "idle" | "harry_talking" | "processing" | "takeover"
 
 // --- Keyword detection for syntax highlighting ---
 
@@ -174,7 +174,6 @@ interface GarageStore {
   disconnect: () => void
   connectMonitor: () => void
   disconnectMonitor: () => void
-  answerCall: () => void
   toggleMic: () => Promise<void>
   sendText: (text: string) => void
   startTakeover: () => Promise<void>
@@ -471,7 +470,7 @@ export const useGarageStore = create<GarageStore>((set, get) => ({
       switch (data.type) {
         case "call_state":
           set({ callState: data.state as CallState })
-          if (data.state === "incoming" || data.state === "harry_talking") {
+          if (data.state === "harry_talking") {
             set({ callStartTime: state.callStartTime || Date.now() })
           }
           if (data.state === "idle") {
@@ -609,13 +608,6 @@ export const useGarageStore = create<GarageStore>((set, get) => ({
     const { _monitorWs } = get()
     _monitorWs?.close()
     set({ _monitorWs: null })
-  },
-
-  answerCall: () => {
-    const { _monitorWs } = get()
-    if (_monitorWs && _monitorWs.readyState === WebSocket.OPEN) {
-      _monitorWs.send(JSON.stringify({ type: "answer_call" }))
-    }
   },
 
   toggleMic: async () => {
