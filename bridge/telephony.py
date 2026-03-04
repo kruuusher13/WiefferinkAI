@@ -314,8 +314,8 @@ def _is_loop_detected(recent_responses: list[str], threshold: float = 0.8, windo
 # TOOL EXECUTION HELPER
 # ============================================
 
-def _execute_tool(f_name: str, f_args: dict) -> str:
-    """Execute a tool by name with given args. Returns result string."""
+def _execute_tool_sync(f_name: str, f_args: dict) -> str:
+    """Execute a tool by name with given args (blocking). Returns result string."""
     if f_name == "lookup_vehicle_rdw":
         return lookup_vehicle_rdw.invoke(f_args)
     elif f_name == "check_apk_status":
@@ -330,6 +330,15 @@ def _execute_tool(f_name: str, f_args: dict) -> str:
         return search_available_cars.invoke(f_args)
     else:
         return f"Error: Unknown tool {f_name}"
+
+
+async def _execute_tool(f_name: str, f_args: dict) -> str:
+    """Execute a tool in a thread pool to avoid blocking the event loop.
+
+    Tools use synchronous requests.get() which blocks. Running them in a
+    thread keeps the WebSocket alive (Twilio pings still get answered).
+    """
+    return await asyncio.to_thread(_execute_tool_sync, f_name, f_args)
 
 
 # ============================================
@@ -560,7 +569,7 @@ async def websocket_endpoint(websocket: WebSocket):
                                         session_sentiments.append(sentiment)
                                         result = "ok"
                                     elif f_name == "request_appointment":
-                                        result = _execute_tool(f_name, f_args)
+                                        result = await _execute_tool(f_name, f_args)
                                         try:
                                             from bridge.email import send_owner_notification
                                             send_owner_notification(
@@ -574,7 +583,7 @@ async def websocket_endpoint(websocket: WebSocket):
                                         except Exception as email_err:
                                             logger.error(f"Owner notification failed: {email_err}")
                                     else:
-                                        result = _execute_tool(f_name, f_args)
+                                        result = await _execute_tool(f_name, f_args)
                                 except Exception as e:
                                     result = f"Tool Execution Error: {e}"
 
@@ -1165,7 +1174,7 @@ async def websocket_web_endpoint(websocket: WebSocket):
                                         }))
                                         result = "ok"
                                     elif f_name == "request_appointment":
-                                        result = _execute_tool(f_name, f_args)
+                                        result = await _execute_tool(f_name, f_args)
                                         # Fire owner notification email
                                         try:
                                             from bridge.email import send_owner_notification
@@ -1180,7 +1189,7 @@ async def websocket_web_endpoint(websocket: WebSocket):
                                         except Exception as email_err:
                                             logger.error(f"Owner notification failed: {email_err}")
                                     else:
-                                        result = _execute_tool(f_name, f_args)
+                                        result = await _execute_tool(f_name, f_args)
                                 except Exception as e:
                                     result = f"Tool Execution Error: {e}"
 
