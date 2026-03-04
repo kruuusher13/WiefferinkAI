@@ -246,6 +246,7 @@ _monitor_clients: set[WebSocket] = set()
 
 async def _broadcast(message: dict):
     """Broadcast a message to all connected monitor clients."""
+    global _monitor_clients
     if not _monitor_clients:
         return
     payload = json.dumps(message)
