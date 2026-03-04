@@ -77,7 +77,7 @@ from app.tools import (
 # Gemini Live API Configuration
 GEMINI_HOST = "generativelanguage.googleapis.com"
 GEMINI_URI = os.getenv("GEMINI_URL_OVERRIDE") or f"wss://{GEMINI_HOST}/ws/google.ai.generativelanguage.v1beta.GenerativeService.BidiGenerateContent?key={GOOGLE_API_KEY}"
-GEMINI_MODEL = "models/gemini-2.5-flash-native-audio-preview-12-2025"
+GEMINI_MODEL = "models/gemini-2.5-flash-native-audio-latest"
 
 # --- System Instruction ---
 SYSTEM_INSTRUCTION = """
