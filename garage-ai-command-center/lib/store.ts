@@ -1,6 +1,13 @@
 import { create } from "zustand"
 import { AudioEngine } from "./audio-engine"
 
+// --- Bridge URL (runtime, not build-time) ---
+
+function getBridgeUrl(): string {
+  if (typeof window !== "undefined") return window.location.origin
+  return "http://localhost:8000"
+}
+
 // --- Types ---
 
 export interface TranscriptLine {
@@ -91,7 +98,7 @@ async function fetchRdwLookup(
 ) {
   if (get().vehicleData) return
   try {
-    const bridgeUrl = process.env.NEXT_PUBLIC_BRIDGE_URL || (typeof window !== "undefined" ? window.location.origin : "http://localhost:8000")
+    const bridgeUrl = getBridgeUrl()
     const resp = await fetch(`${bridgeUrl}/api/rdw-lookup/${encodeURIComponent(kenteken)}`)
     const json = await resp.json()
     if (json.status === "success" && json.data) {
@@ -208,7 +215,7 @@ export const useGarageStore = create<GarageStore>((set, get) => ({
     let ws: WebSocket
     let audio: AudioEngine
     try {
-      const bridgeUrl = process.env.NEXT_PUBLIC_BRIDGE_URL || (typeof window !== "undefined" ? window.location.origin : "http://localhost:8000")
+      const bridgeUrl = getBridgeUrl()
       const wsUrl = bridgeUrl.replace(/^http/, "ws") + "/ws/web"
       ws = new WebSocket(wsUrl)
       audio = new AudioEngine()
@@ -489,7 +496,7 @@ export const useGarageStore = create<GarageStore>((set, get) => ({
     if (!proposal) return
 
     try {
-      const bridgeUrl = process.env.NEXT_PUBLIC_BRIDGE_URL || (typeof window !== "undefined" ? window.location.origin : "http://localhost:8000")
+      const bridgeUrl = getBridgeUrl()
       const payload = {
         description: proposal.proposed.description || proposal.title,
         date_time: proposal.proposed.date_time || "",

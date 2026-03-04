@@ -46,7 +46,7 @@ export function Nav() {
     }
   }, [checkCalendarStatus])
 
-  const bridgeUrl = process.env.NEXT_PUBLIC_BRIDGE_URL || (typeof window !== "undefined" ? window.location.origin : "http://localhost:8000")
+  const bridgeUrl = typeof window !== "undefined" ? window.location.origin : ""
 
   return (
     <header className="flex items-center justify-between border-b border-border bg-white px-4 py-2">

@@ -41,7 +41,7 @@ export function CalendarView() {
   const fetchEvents = useCallback(async () => {
     setLoading(true)
     try {
-      const bridgeUrl = process.env.NEXT_PUBLIC_BRIDGE_URL || (typeof window !== "undefined" ? window.location.origin : "http://localhost:8000")
+      const bridgeUrl = window.location.origin
       const resp = await fetch(`${bridgeUrl}/api/calendar/events?days=60`)
       const data = await resp.json()
       if (data.status === "success") {
