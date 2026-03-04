@@ -161,13 +161,20 @@ interface GarageStore {
   customInstructions: string
   customInstructionsStatus: "idle" | "saving" | "saved" | "error"
 
+  // Mode
+  mode: "talk" | "monitor"
+
   // WebSocket + Audio internals
   _ws: WebSocket | null
   _audio: AudioEngine | null
+  _monitorWs: WebSocket | null
 
   // Actions
   connect: () => void
   disconnect: () => void
+  connectMonitor: () => void
+  disconnectMonitor: () => void
+  answerCall: () => void
   toggleMic: () => Promise<void>
   sendText: (text: string) => void
   startTakeover: () => Promise<void>
@@ -203,8 +210,10 @@ export const useGarageStore = create<GarageStore>((set, get) => ({
   calendarLoading: false,
   customInstructions: "",
   customInstructionsStatus: "idle",
+  mode: "monitor",
   _ws: null,
   _audio: null,
+  _monitorWs: null,
 
   connect: () => {
     const { _ws } = get()
@@ -231,6 +240,7 @@ export const useGarageStore = create<GarageStore>((set, get) => ({
         wsStatus: "connected",
         callStartTime: Date.now(),
         callState: "idle",
+        mode: "talk",
         transcript: [],
         thoughts: [],
         vehicleData: null,
@@ -413,7 +423,199 @@ export const useGarageStore = create<GarageStore>((set, get) => ({
       isMicActive: false,
       isTakeover: false,
       audioLevel: 0,
+      mode: "monitor",
     })
+  },
+
+  connectMonitor: () => {
+    const { _monitorWs } = get()
+    if (_monitorWs && _monitorWs.readyState <= WebSocket.OPEN) return
+
+    const bridgeUrl = getBridgeUrl()
+    const wsUrl = bridgeUrl.replace(/^http/, "ws") + "/ws/web?mode=monitor"
+    let ws: WebSocket
+    try {
+      ws = new WebSocket(wsUrl)
+    } catch (err) {
+      console.error("[Monitor] Failed to connect:", err)
+      return
+    }
+
+    ws.onopen = () => {
+      console.log("[Monitor] Connected")
+    }
+
+    ws.onclose = () => {
+      console.log("[Monitor] Disconnected")
+      set({ _monitorWs: null })
+      // Auto-reconnect after 3s
+      setTimeout(() => {
+        const state = get()
+        if (!state._monitorWs && state.mode === "monitor") {
+          state.connectMonitor()
+        }
+      }, 3000)
+    }
+
+    ws.onerror = () => {
+      console.error("[Monitor] WebSocket error")
+    }
+
+    ws.onmessage = (event) => {
+      let data: any
+      try {
+        data = JSON.parse(event.data)
+      } catch { return }
+      const state = get()
+
+      switch (data.type) {
+        case "call_state":
+          set({ callState: data.state as CallState })
+          if (data.state === "incoming" || data.state === "harry_talking") {
+            set({ callStartTime: state.callStartTime || Date.now() })
+          }
+          if (data.state === "idle") {
+            set({
+              callStartTime: null,
+              // Reset call data when call ends
+              transcript: [],
+              thoughts: [],
+              vehicleData: null,
+              vehicleAlerts: [],
+              customerName: null,
+              sentiment: "😐",
+              proposals: [],
+              isTakeover: false,
+            })
+            transcriptIdCounter = 0
+          }
+          break
+
+        case "transcript": {
+          const speaker = data.role === "assistant" ? "harry" : "customer"
+          const now = new Date()
+          const ts = `${String(now.getHours()).padStart(2, "0")}:${String(now.getMinutes()).padStart(2, "0")}:${String(now.getSeconds()).padStart(2, "0")}`
+          const keywords = detectKeywords(data.text)
+          transcriptIdCounter++
+          set({
+            transcript: [
+              ...state.transcript,
+              { id: transcriptIdCounter, speaker, text: data.text, timestamp: ts, keywords },
+            ],
+          })
+          if (!get().vehicleData) {
+            const detected = extractKenteken(data.text)
+            if (detected) fetchRdwLookup(detected, set, get)
+          }
+          break
+        }
+
+        case "thought": {
+          const now2 = new Date()
+          const ts2 = `${String(now2.getHours()).padStart(2, "0")}:${String(now2.getMinutes()).padStart(2, "0")}:${String(now2.getSeconds()).padStart(2, "0")}`
+          transcriptIdCounter++
+          set({
+            thoughts: [
+              ...state.thoughts,
+              { id: transcriptIdCounter, text: data.text, timestamp: ts2 },
+            ],
+          })
+          break
+        }
+
+        case "vehicle_data":
+          if (data.data) set({ vehicleData: data.data })
+          break
+
+        case "sentiment": {
+          const sentimentMap: Record<string, string> = {
+            happy: "🙂", neutral: "😐", frustrated: "😠", sad: "😢",
+          }
+          const emoji = sentimentMap[data.emoji] || data.emoji || "😐"
+          set({ sentiment: emoji })
+          break
+        }
+
+        case "tool_call": {
+          const pType = toolToProposalType(data.name)
+          if (pType) {
+            proposalIdCounter++
+            const proposal: ActionProposal = {
+              id: proposalIdCounter,
+              title: toolToProposalTitle(data.name, data.args || {}),
+              type: pType,
+              current: {},
+              proposed: data.args || {},
+              status: "pending",
+            }
+            set({ proposals: [...state.proposals, proposal] })
+          }
+          if (data.name === "request_appointment" && data.args?.customer_name) {
+            set({ customerName: data.args.customer_name })
+          }
+          if (data.name === "lookup_vehicle_rdw" && data.args?.kenteken) {
+            const cleanKt = data.args.kenteken.replace(/[-\s]/g, "").toUpperCase()
+            fetchRdwLookup(cleanKt, set, get)
+          }
+          break
+        }
+
+        case "tool_result": {
+          const result = data.result || ""
+          if (data.name === "lookup_vehicle_rdw" && !get().vehicleData) {
+            const vd: Record<string, string> = {}
+            const lines = result.split("\n").filter(Boolean)
+            for (const line of lines) {
+              const sep = line.indexOf(":")
+              if (sep > 0) {
+                const key = line.slice(0, sep).trim().toLowerCase().replace(/\s+/g, "_")
+                const val = line.slice(sep + 1).trim()
+                if (key && val) vd[key] = val
+              }
+            }
+            if (Object.keys(vd).length > 0) set({ vehicleData: vd })
+          }
+          if (data.name === "check_apk_status") {
+            const alert = parseApkAlert(result)
+            if (alert) set({ vehicleAlerts: [...get().vehicleAlerts, alert] })
+          }
+          if (data.name === "get_vehicle_recalls") {
+            const alert = parseRecallAlert(result)
+            if (alert) set({ vehicleAlerts: [...get().vehicleAlerts, alert] })
+          }
+          const pType = toolToProposalType(data.name)
+          if (pType) {
+            const proposals = [...get().proposals]
+            for (let i = proposals.length - 1; i >= 0; i--) {
+              if (proposals[i].type === pType && proposals[i].status === "pending") {
+                proposals[i] = {
+                  ...proposals[i],
+                  proposed: { ...proposals[i].proposed, result: result.slice(0, 100) },
+                }
+                break
+              }
+            }
+            set({ proposals })
+          }
+          break
+        }
+      }
+    }
+
+    set({ _monitorWs: ws })
+  },
+
+  disconnectMonitor: () => {
+    const { _monitorWs } = get()
+    _monitorWs?.close()
+    set({ _monitorWs: null })
+  },
+
+  answerCall: () => {
+    const { _monitorWs } = get()
+    if (_monitorWs && _monitorWs.readyState === WebSocket.OPEN) {
+      _monitorWs.send(JSON.stringify({ type: "answer_call" }))
+    }
   },
 
   toggleMic: async () => {
@@ -455,40 +657,47 @@ export const useGarageStore = create<GarageStore>((set, get) => ({
   },
 
   startTakeover: async () => {
-    const { _ws, _audio } = get()
-    if (!_ws || _ws.readyState !== WebSocket.OPEN) return
+    const { _ws, _monitorWs, _audio, mode } = get()
+    // Use monitor WS if in monitor mode, otherwise use talk WS
+    const ws = mode === "monitor" ? _monitorWs : _ws
+    if (!ws || ws.readyState !== WebSocket.OPEN) return
 
-    // Signal backend to start takeover
-    _ws.send(JSON.stringify({ type: "takeover", action: "start" }))
+    ws.send(JSON.stringify({ type: "takeover", action: "start" }))
 
     // Start mic capture, send as takeover_audio
-    if (_audio) {
-      await _audio.initCapture(
-        (b64) => {
-          if (_ws.readyState === WebSocket.OPEN) {
-            _ws.send(JSON.stringify({ type: "takeover_audio", data: b64 }))
-          }
-        },
-        (level) => {
-          set({ audioLevel: level })
-        }
-      )
+    let audio = _audio
+    if (!audio) {
+      audio = new AudioEngine()
+      audio.initPlayback()
+      set({ _audio: audio })
     }
+
+    await audio.initCapture(
+      (b64) => {
+        if (ws.readyState === WebSocket.OPEN) {
+          ws.send(JSON.stringify({ type: "takeover_audio", data: b64 }))
+        }
+      },
+      (level) => {
+        set({ audioLevel: level })
+      }
+    )
 
     set({ isTakeover: true, callState: "takeover", isMicActive: true })
   },
 
   stopTakeover: () => {
-    const { _ws, _audio } = get()
-    if (!_ws || _ws.readyState !== WebSocket.OPEN) return
+    const { _ws, _monitorWs, _audio, mode } = get()
+    const ws = mode === "monitor" ? _monitorWs : _ws
+    if (!ws || ws.readyState !== WebSocket.OPEN) return
 
-    _ws.send(JSON.stringify({ type: "takeover", action: "stop" }))
+    ws.send(JSON.stringify({ type: "takeover", action: "stop" }))
 
     if (_audio) {
       _audio.stopCapture()
     }
 
-    set({ isTakeover: false, callState: "idle", isMicActive: false, audioLevel: 0 })
+    set({ isTakeover: false, callState: "harry_talking", isMicActive: false, audioLevel: 0 })
   },
 
   acceptProposal: async (id: number) => {

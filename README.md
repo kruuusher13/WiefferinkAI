@@ -239,11 +239,21 @@ torxflow/
 6. Owner reviews proposal in Action Queue panel → clicks Accept
 7. Google Calendar event created + confirmation email sent to customer
 
+### Live Call Monitoring & Ringing
+
+The dashboard auto-connects in **monitor mode** on page load, streaming all Twilio call data live:
+
+1. Phone call arrives → dashboard shows pulsing **Answer Call** button
+2. Owner has **15 seconds** to answer before Harry auto-picks up
+3. If owner clicks Answer → direct takeover (Gemini never connects)
+4. If timeout → Harry greets the caller, all transcripts/tools/vehicle data stream to dashboard in real time
+5. During any active call, owner can click **Take Over** to intervene
+
 ### Takeover Mode
 
 The garage owner can take over a live Twilio call:
 
-1. Click **Take Over** in the Controls panel
+1. Click **Take Over** in the nav bar (or answer an incoming call)
 2. Harry goes silent (Gemini suppressed), owner speaks directly to the customer
 3. Owner's mic audio is resampled (16kHz PCM → 8kHz µ-law) and forwarded to Twilio
 4. Click **Return to Harry** to hand the conversation back
@@ -299,7 +309,8 @@ gcloud run services update garageai-bridge \
 | `GET` | `/api/transcripts` | List saved transcripts |
 | `GET` | `/api/transcripts/{id}` | Get full transcript |
 | `WS` | `/ws/twilio` | Twilio Media Stream WebSocket |
-| `WS` | `/ws/web` | Web dashboard WebSocket |
+| `WS` | `/ws/web` | Web dashboard WebSocket (talk mode) |
+| `WS` | `/ws/web?mode=monitor` | Dashboard monitor WebSocket (live call broadcast) |
 
 ## Audio Pipeline
 
