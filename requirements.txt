@@ -30,5 +30,13 @@ langchain-community
 # Search (for web_search tool)
 duckduckgo-search
 
-# Database
-pyodbc
+# Google Calendar
+google-api-python-client
+google-auth
+google-auth-oauthlib
+
+# Cloud Storage (transcripts)
+google-cloud-storage
+
+# Email
+resend

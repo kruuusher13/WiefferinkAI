@@ -4,25 +4,23 @@ import logging
 import httpx
 from pathlib import Path
 from typing import Optional
-from fastapi import FastAPI, HTTPException
-from fastapi.responses import JSONResponse
+from fastapi import FastAPI, HTTPException, Request
+from fastapi.responses import JSONResponse, Response, FileResponse, HTMLResponse, RedirectResponse
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
-from app.init_db import wait_for_db, execute_script
-import pyodbc
 
 logging.basicConfig(level=logging.INFO)
-logger = logging.getLogger("GarageAI")
+logger = logging.getLogger("TorxFlow")
 
 from bridge.telephony import router as telephony_router
 from bridge.state import get_custom_instructions, set_custom_instructions
+from bridge.calendar_auth import CalendarNotConnectedError
 
-# --- FastAPI App ---
-app = FastAPI(title="GarageAI WinCar Integration", version="2.0.0")
+app = FastAPI(title="TorxFlow Integration", version="2.0.0")
 
-# CORS — allow dev and production origins
 _cors_origins = ["http://localhost:3000", "http://localhost:8000"]
-_extra_origin = os.getenv("CORS_ORIGIN")  # e.g. https://garageai-dashboard-xxx-ew.a.run.app
+_extra_origin = os.getenv("CORS_ORIGIN")
 if _extra_origin:
     _cors_origins.append(_extra_origin)
 
@@ -34,74 +32,8 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# Include Telephony/Websocket Routes
 app.include_router(telephony_router)
 
-# --- Database Connection (env var with local fallback) ---
-DB_CONN_STR = os.getenv(
-    "WINCAR_DB_CONNECTION",
-    r"DRIVER={ODBC Driver 18 for SQL Server};SERVER=localhost;DATABASE=WinCarLive;UID=sa;PWD=StrongPassword123!"
-)
-
-@app.on_event("startup")
-async def startup_event():
-    """Initialize database on startup."""
-    logger.info("Initializing database...")
-    try:
-        wait_for_db()
-        # Check if WinCarLive DB already exists before re-creating
-        import pyodbc
-        from app.init_db import CONN_STR
-        conn = pyodbc.connect(CONN_STR, timeout=3)
-        cursor = conn.cursor()
-        cursor.execute("SELECT DB_ID('WinCarLive')")
-        exists = cursor.fetchone()[0] is not None
-        conn.close()
-        if exists:
-            logger.info("Database WinCarLive already exists, skipping init.")
-        else:
-            execute_script("mock_wincar_db.sql")
-            logger.info("Database initialized successfully.")
-    except Exception as e:
-        logger.error(f"Failed to initialize database: {e}")
-
-@app.get("/api/db/{table_name}")
-async def get_db_table(table_name: str):
-    """Fetch all rows from a specified table for visualization."""
-    valid_tables = [
-        "customers", "vehicles", "werkorders", "lines", 
-        "stock", "categories", "services", "rates", "invoices"
-    ]
-    if table_name not in valid_tables:
-        raise HTTPException(status_code=400, detail="Invalid table name")
-    
-    try:
-        conn = pyodbc.connect(DB_CONN_STR)
-        cursor = conn.cursor()
-        
-        # Determine actual table name in DB
-        db_table = ""
-        if table_name == "customers": db_table = "Communicatie_Relaties"
-        elif table_name == "vehicles": db_table = "Werkplaats_Voertuigen"
-        elif table_name == "werkorders": db_table = "Werkplaats_Werkorders"
-        elif table_name == "lines": db_table = "Werkplaats_WerkorderRegels"
-        elif table_name == "stock": db_table = "Magazijn_Artikelen"
-        elif table_name == "categories": db_table = "Magazijn_Categorieen"
-        elif table_name == "services": db_table = "Diensten_Services"
-        elif table_name == "rates": db_table = "Diensten_Tarieven"
-        elif table_name == "invoices": db_table = "Financieel_Facturen"
-        
-        cursor.execute(f"SELECT * FROM {db_table}")
-        columns = [column[0] for column in cursor.description]
-        results = []
-        for row in cursor.fetchall():
-            results.append(dict(zip(columns, row)))
-            
-        conn.close()
-        return results
-    except Exception as e:
-        logger.error(f"Database error: {e}")
-        return JSONResponse(status_code=500, content={"error": str(e)})
 
 # --- RDW Direct Lookup (structured JSON for frontend) ---
 
@@ -142,7 +74,6 @@ async def rdw_lookup(kenteken: str):
         vervaldatum_apk = _format_rdw_date(v.get("vervaldatum_apk", ""))
         kleur = v.get("eerste_kleur", "Onbekend")
 
-        # Calculate APK days remaining
         apk_days = None
         raw_apk = v.get("vervaldatum_apk", "")
         if raw_apk and len(raw_apk) >= 8:
@@ -171,93 +102,126 @@ async def rdw_lookup(kenteken: str):
         return {"status": "error", "data": None, "message": str(e)}
 
 
-# --- Werkorder Creation (from Dashboard Accept) ---
+# --- Google Calendar OAuth ---
 
-class WerkorderCreate(BaseModel):
-    description: str
-    customer_name: Optional[str] = None
-    phone_number: Optional[str] = None
-    kenteken: Optional[str] = None
-    date_time: Optional[str] = None
+def _calendar_redirect_uri(request: Request) -> str:
+    """Build the OAuth callback URL from request headers (works localhost + production)."""
+    host = request.headers.get("x-forwarded-host") or request.headers.get("host", "localhost:8000")
+    scheme = request.headers.get("x-forwarded-proto", "http")
+    return f"{scheme}://{host}/api/calendar/callback"
 
-@app.post("/api/werkorder")
-async def create_werkorder(payload: WerkorderCreate):
-    """Create a werkorder from a dashboard-accepted proposal."""
-    import re
-    conn = pyodbc.connect(DB_CONN_STR)
-    cursor = conn.cursor()
+
+@app.get("/api/calendar/status")
+async def calendar_status():
+    """Check if Google Calendar is connected."""
+    from bridge.calendar_auth import is_connected
+    return {"connected": is_connected()}
+
+
+@app.get("/api/calendar/auth")
+async def calendar_auth(request: Request):
+    """Redirect to Google consent screen."""
+    from bridge.calendar_auth import get_auth_url
+    auth_url = get_auth_url(redirect_uri=_calendar_redirect_uri(request))
+    return RedirectResponse(auth_url)
+
+
+def _frontend_url(request: Request) -> str:
+    """Determine the frontend URL for redirects."""
+    url = os.getenv("CORS_ORIGIN", "")
+    if url:
+        return url
+    # In local dev, frontend is on :3000
+    return "http://localhost:3000"
+
+
+@app.get("/api/calendar/callback")
+async def calendar_callback(request: Request, code: str):
+    """Exchange auth code for tokens, redirect to frontend."""
+    from bridge.calendar_auth import exchange_code
+    base = _frontend_url(request)
     try:
-        klant_id = None
-        voertuig_id = None
-
-        # Find or create customer
-        if payload.phone_number:
-            clean_phone = re.sub(r'[^0-9+]', '', payload.phone_number)
-            if clean_phone.startswith("+31"):
-                clean_phone = "0" + clean_phone[3:]
-            cursor.execute(
-                "SELECT KlantID FROM Communicatie_Relaties WHERE Telefoon LIKE ?",
-                f"%{clean_phone}%"
-            )
-            row = cursor.fetchone()
-            if row:
-                klant_id = row[0]
-            elif payload.customer_name:
-                cursor.execute(
-                    "INSERT INTO Communicatie_Relaties (KlantNaam, Telefoon) OUTPUT INSERTED.KlantID VALUES (?, ?)",
-                    payload.customer_name, clean_phone
-                )
-                klant_id = cursor.fetchone()[0]
-                conn.commit()
-        elif payload.customer_name:
-            cursor.execute(
-                "SELECT KlantID FROM Communicatie_Relaties WHERE KlantNaam = ?",
-                payload.customer_name
-            )
-            row = cursor.fetchone()
-            if row:
-                klant_id = row[0]
-
-        # Find or create vehicle
-        if payload.kenteken:
-            clean_kt = re.sub(r'[^A-Z0-9]', '', payload.kenteken.upper())
-            cursor.execute(
-                "SELECT VoertuigID FROM Werkplaats_Voertuigen WHERE Kenteken = ?",
-                clean_kt
-            )
-            vrow = cursor.fetchone()
-            if vrow:
-                voertuig_id = vrow[0]
-            elif klant_id:
-                cursor.execute(
-                    "INSERT INTO Werkplaats_Voertuigen (Kenteken, KlantID) OUTPUT INSERTED.VoertuigID VALUES (?, ?)",
-                    clean_kt, klant_id
-                )
-                voertuig_id = cursor.fetchone()[0]
-                conn.commit()
-
-        # Build description
-        omschrijving = payload.description
-        if payload.date_time:
-            omschrijving += f" (Afspraak: {payload.date_time})"
-        if payload.customer_name:
-            omschrijving += f" (Klant: {payload.customer_name})"
-
-        # Create werkorder
-        cursor.execute(
-            "INSERT INTO Werkplaats_Werkorders (VoertuigID, KlantID, Status, Omschrijving) OUTPUT INSERTED.WerkorderID VALUES (?, ?, 'Gepland', ?)",
-            voertuig_id, klant_id, omschrijving
-        )
-        werkorder_id = cursor.fetchone()[0]
-        conn.commit()
-
-        return {"status": "success", "werkorder_id": werkorder_id}
+        exchange_code(code, redirect_uri=_calendar_redirect_uri(request))
     except Exception as e:
-        logger.error(f"Werkorder creation error: {e}")
-        return JSONResponse(status_code=500, content={"status": "error", "message": str(e)})
-    finally:
-        conn.close()
+        logger.error(f"Calendar OAuth callback error: {e}")
+        return RedirectResponse(f"{base}/?calendar=error")
 
+    return RedirectResponse(f"{base}/?calendar=connected")
+
+
+@app.post("/api/calendar/disconnect")
+async def calendar_disconnect():
+    """Delete stored OAuth tokens."""
+    from bridge.calendar_auth import delete_tokens
+    delete_tokens()
+    return {"status": "success"}
+
+
+# --- Google Calendar Endpoints ---
+
+@app.get("/api/calendar/events")
+async def get_calendar_events(days: int = 30):
+    """List upcoming Google Calendar events."""
+    try:
+        from bridge.calendar import list_events
+        events = list_events(days_ahead=days)
+        return {"status": "success", "events": events}
+    except CalendarNotConnectedError:
+        return JSONResponse(status_code=401, content={"status": "not_connected", "message": "Google Calendar is not connected"})
+    except Exception as e:
+        logger.error(f"Calendar events error: {e}")
+        return {"status": "error", "message": str(e)}
+
+
+# --- Appointment Acceptance ---
+
+class AppointmentAccept(BaseModel):
+    description: str
+    date_time: str
+    customer_name: str
+    customer_phone: Optional[str] = None
+    customer_email: str
+    kenteken: Optional[str] = ""
+    duration_minutes: Optional[int] = 60
+
+@app.post("/api/appointment/accept")
+async def accept_appointment(payload: AppointmentAccept):
+    """Accept an appointment proposal: create Google Calendar event + send confirmation email."""
+    try:
+        from bridge.calendar import create_event
+        from bridge.email import send_customer_confirmation
+
+        event = create_event(
+            summary=f"{payload.description} - {payload.customer_name}",
+            start_datetime=payload.date_time,
+            duration_minutes=payload.duration_minutes or 60,
+            customer_name=payload.customer_name,
+            customer_phone=payload.customer_phone or "",
+            customer_email=payload.customer_email,
+            kenteken=payload.kenteken or "",
+            description=payload.description,
+        )
+
+        send_customer_confirmation(
+            to_email=payload.customer_email,
+            customer_name=payload.customer_name,
+            date_time=payload.date_time,
+            description=payload.description,
+        )
+
+        return {
+            "status": "success",
+            "calendar_event_id": event.get("id", ""),
+            "calendar_link": event.get("htmlLink", ""),
+        }
+    except CalendarNotConnectedError:
+        return JSONResponse(status_code=401, content={"status": "not_connected", "message": "Google Calendar is not connected"})
+    except Exception as e:
+        logger.error(f"Appointment acceptance error: {e}")
+        return JSONResponse(status_code=500, content={"status": "error", "message": str(e)})
+
+
+# --- Custom Instructions ---
 
 class CustomInstructionsPayload(BaseModel):
     instructions: str
@@ -273,49 +237,81 @@ async def save_instructions(payload: CustomInstructionsPayload):
 
 # --- Transcript History ---
 
-TRANSCRIPTS_DIR = Path(__file__).resolve().parent.parent / "transcripts"
+from bridge.transcripts import list_transcripts as _list_transcripts, get_transcript as _get_transcript
 
 @app.get("/api/transcripts")
 async def list_transcripts():
     """List all saved transcripts, sorted by date descending."""
-    if not TRANSCRIPTS_DIR.exists():
-        return []
-    results = []
-    for f in sorted(TRANSCRIPTS_DIR.glob("*.json"), reverse=True):
-        try:
-            data = json.loads(f.read_text())
-            preview = ""
-            for msg in data.get("transcript", []):
-                if msg.get("role") == "assistant" and msg.get("type") == "speech":
-                    preview = msg["text"][:100]
-                    break
-            results.append({
-                "id": f.stem,
-                "date": data.get("date", ""),
-                "channel": data.get("channel", "unknown"),
-                "duration": data.get("duration", 0),
-                "preview": preview,
-                "message_count": data.get("message_count", 0),
-            })
-        except Exception:
-            continue
-    return results
+    return _list_transcripts()
 
 @app.get("/api/transcripts/{transcript_id}")
 async def get_transcript(transcript_id: str):
     """Return a full transcript by ID (filename stem)."""
-    filepath = TRANSCRIPTS_DIR / f"{transcript_id}.json"
-    if not filepath.exists():
+    data = _get_transcript(transcript_id)
+    if data is None:
         raise HTTPException(status_code=404, detail="Transcript not found")
-    try:
-        return json.loads(filepath.read_text())
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+    return data
 
 
-@app.get("/")
+# --- Twilio Incoming Call Webhook ---
+
+@app.post("/twilio/voice")
+@app.get("/twilio/voice")
+async def twilio_voice_webhook(request: Request):
+    """TwiML webhook for incoming Twilio calls."""
+    host = request.headers.get("x-forwarded-host") or request.headers.get("host", "localhost:8000")
+    scheme = "wss" if request.headers.get("x-forwarded-proto") == "https" else "ws"
+    ws_url = f"{scheme}://{host}/ws/twilio"
+
+    twiml = f"""<?xml version="1.0" encoding="UTF-8"?>
+<Response>
+    <Connect>
+        <Stream url="{ws_url}" />
+    </Connect>
+</Response>"""
+
+    return Response(content=twiml, media_type="application/xml")
+
+
+@app.get("/api/health")
 async def health_check():
-    return {"status": "online", "system": "GarageAI WinCar Integration"}
+    return {"status": "online", "system": "TorxFlow"}
+
+
+# --- Static Frontend Serving ---
+
+FRONTEND_DIR = Path(__file__).resolve().parent.parent / "static_frontend"
+
+if FRONTEND_DIR.exists():
+    app.mount("/_next", StaticFiles(directory=FRONTEND_DIR / "_next"), name="next-static")
+
+    @app.get("/audio-worklet-processor.js")
+    async def audio_worklet():
+        return FileResponse(FRONTEND_DIR / "audio-worklet-processor.js")
+
+    @app.get("/basic")
+    async def serve_basic():
+        return FileResponse(FRONTEND_DIR / "basic.html", media_type="text/html")
+
+    @app.get("/dashboard")
+    async def serve_dashboard():
+        return FileResponse(FRONTEND_DIR / "dashboard.html", media_type="text/html")
+
+    @app.get("/history")
+    async def serve_history():
+        return FileResponse(FRONTEND_DIR / "history.html", media_type="text/html")
+
+    @app.get("/calendar")
+    async def serve_calendar():
+        return FileResponse(FRONTEND_DIR / "calendar.html", media_type="text/html")
+
+    @app.get("/")
+    async def serve_index():
+        return FileResponse(FRONTEND_DIR / "index.html", media_type="text/html")
+else:
+    @app.get("/")
+    async def health_fallback():
+        return {"status": "online", "system": "TorxFlow", "frontend": "not built"}
 
 if __name__ == "__main__":
     import uvicorn

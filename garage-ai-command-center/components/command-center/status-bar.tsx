@@ -9,10 +9,10 @@ export function StatusBar() {
 
   const statusColor =
     wsStatus === "connected"
-      ? "bg-syntax-lime"
+      ? "bg-green-500"
       : wsStatus === "connecting"
-        ? "bg-syntax-orange"
-        : "bg-muted-foreground"
+        ? "bg-amber-500"
+        : "bg-neutral-400"
 
   const statusText =
     wsStatus === "connected"
@@ -23,13 +23,13 @@ export function StatusBar() {
 
   const statusTextColor =
     wsStatus === "connected"
-      ? "text-syntax-lime"
+      ? "text-green-600"
       : wsStatus === "connecting"
-        ? "text-syntax-orange"
+        ? "text-amber-600"
         : "text-muted-foreground"
 
   return (
-    <footer className="flex items-center justify-between border-t border-border bg-surface-1 px-4 py-1.5 font-mono text-[11px]">
+    <footer className="flex items-center justify-between border-t border-border bg-white px-4 py-1.5 text-[11px]">
       <div className="flex items-center gap-4">
         <span className="flex items-center gap-1.5">
           <span className="relative flex h-2 w-2">
@@ -42,17 +42,17 @@ export function StatusBar() {
         </span>
         <span className="text-muted-foreground">
           State:{" "}
-          <span className="text-syntax-cyan">{callState}</span>
+          <span className="font-medium text-foreground">{callState}</span>
         </span>
         <span className="text-muted-foreground">
           Mic:{" "}
-          <span className={isMicActive ? "text-syntax-lime" : "text-muted-foreground"}>
+          <span className={isMicActive ? "font-medium text-green-600" : "text-muted-foreground"}>
             {isMicActive ? "Active" : "Off"}
           </span>
         </span>
       </div>
       <div className="flex items-center gap-4 text-muted-foreground">
-        <span>GarageAI v2.4.1</span>
+        <span>TorxFlow v1.0.0</span>
         <span>NL-West</span>
       </div>
     </footer>

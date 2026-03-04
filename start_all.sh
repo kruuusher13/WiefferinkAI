@@ -1,8 +1,8 @@
 #!/bin/bash
 
-# GarageAI Full-Stack Startup Script
+# TorxFlow Full-Stack Startup Script
 
-echo "Starting GarageAI..."
+echo "Starting TorxFlow..."
 
 # 0. Load .env (supports values with spaces)
 if [ -f .env ]; then
@@ -19,34 +19,18 @@ if [ -z "$GOOGLE_API_KEY" ]; then
 fi
 echo "Google API Key: OK"
 
-# 2. Start Database
-echo "Checking database..."
-if ! docker ps | grep -q "wincar_sql"; then
-    echo "Starting database container..."
-    if ! command -v docker-compose &> /dev/null; then
-        echo "Error: Docker Compose not found. Install Docker Desktop."
-        exit 1
-    fi
-    docker-compose up -d
-    echo "Waiting for DB to initialize..."
-    sleep 10
-    python app/init_db.py
-else
-    echo "Database (wincar_sql): running"
-fi
-
-# 3. Kill old processes
+# 2. Kill old processes
 echo "Cleaning up old processes..."
 lsof -i :8000 -t | xargs kill -9 2>/dev/null || true
 lsof -i :3000 -t | xargs kill -9 2>/dev/null || true
 
-# 4. Start FastAPI backend
+# 3. Start FastAPI backend
 echo "Starting FastAPI backend on :8000..."
 nohup python -m uvicorn bridge.api:app --port 8000 --host 0.0.0.0 --reload > server.log 2>&1 &
 BACKEND_PID=$!
 echo "Backend started (PID: $BACKEND_PID)"
 
-# 5. Start Next.js frontend
+# 4. Start Next.js frontend
 echo "Starting Next.js frontend on :3000..."
 cd garage-ai-command-center
 
@@ -61,10 +45,10 @@ FRONTEND_PID=$!
 cd ..
 echo "Frontend started (PID: $FRONTEND_PID)"
 
-# 6. Summary
+# 5. Summary
 echo ""
 echo "=================================================="
-echo "GarageAI ONLINE"
+echo "TorxFlow ONLINE"
 echo "=================================================="
 echo "  Dashboard : http://localhost:3000"
 echo "  Backend   : http://localhost:8000"

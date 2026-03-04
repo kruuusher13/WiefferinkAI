@@ -5,20 +5,20 @@ import { AlertTriangle, Maximize2, Minimize2 } from "lucide-react"
 import { useGarageStore } from "@/lib/store"
 
 const VALUE_COLORS: Record<string, string> = {
-  merk: "text-syntax-cyan",
-  model: "text-syntax-cyan",
-  brandstof: "text-syntax-cyan",
-  fuel_type: "text-syntax-cyan",
-  handelsbenaming: "text-syntax-cyan",
-  bouwjaar: "text-syntax-orange",
-  year: "text-syntax-orange",
-  eerste_toelating: "text-syntax-orange",
-  apk_vervaldatum: "text-syntax-lime",
-  apk_expiry: "text-syntax-lime",
-  vervaldatum_apk: "text-syntax-lime",
-  kenteken: "text-syntax-orange",
-  kleur: "text-syntax-purple",
-  status: "text-syntax-lime",
+  merk: "text-[#ea580c]",
+  model: "text-[#ea580c]",
+  brandstof: "text-[#ea580c]",
+  fuel_type: "text-[#ea580c]",
+  handelsbenaming: "text-[#ea580c]",
+  bouwjaar: "text-amber-600",
+  year: "text-amber-600",
+  eerste_toelating: "text-amber-600",
+  apk_vervaldatum: "text-green-600",
+  apk_expiry: "text-green-600",
+  vervaldatum_apk: "text-green-600",
+  kenteken: "text-amber-600",
+  kleur: "text-violet-600",
+  status: "text-green-600",
 }
 
 export function VehicleContext({
@@ -55,7 +55,7 @@ export function VehicleContext({
       return { message: `APK VERLOPEN (${Math.abs(days)} dagen geleden!)`, severity: "warning" as const }
     }
     if (days <= 30) {
-      return { message: `APK verloopt over ${days} dagen — maak een afspraak!`, severity: "warning" as const }
+      return { message: `APK verloopt over ${days} dagen \u2014 maak een afspraak!`, severity: "warning" as const }
     }
     if (days <= 60) {
       return { message: `APK verloopt over ${days} dagen`, severity: "info" as const }
@@ -64,26 +64,26 @@ export function VehicleContext({
   })()
 
   return (
-    <div className="flex h-full flex-col overflow-hidden rounded-lg border border-border bg-surface-1">
+    <div className="flex h-full flex-col overflow-hidden rounded-2xl border border-[hsl(var(--card-border))] bg-card">
       {/* Header */}
       <div className="flex items-center justify-between border-b border-border px-4 py-2.5">
         <div className="flex items-center gap-3">
-          <h2 className="font-mono text-xs font-medium text-foreground">
-            vehicle_context.inspect
+          <h2 className="text-xs font-semibold text-foreground">
+            Vehicle
           </h2>
           {hasData ? (
-            <span className="rounded-sm bg-syntax-cyan/10 px-1.5 py-0.5 font-mono text-[10px] text-syntax-cyan">
+            <span className="rounded-full bg-[#ea580c]/10 px-2 py-0.5 text-[10px] font-medium text-[#ea580c]">
               LOADED
             </span>
           ) : (
-            <span className="rounded-sm bg-muted-foreground/10 px-1.5 py-0.5 font-mono text-[10px] text-muted-foreground">
+            <span className="rounded-full bg-neutral-100 px-2 py-0.5 text-[10px] font-medium text-muted-foreground">
               {wsStatus === "connected" ? "AWAITING" : "EMPTY"}
             </span>
           )}
         </div>
         <button
           onClick={onToggleFocus}
-          className="rounded-md p-1 text-muted-foreground transition-colors hover:bg-surface-2 hover:text-foreground"
+          className="rounded-lg p-1 text-muted-foreground transition-colors hover:bg-surface-2 hover:text-foreground"
           aria-label={isFocused ? "Minimize" : "Maximize"}
         >
           {isFocused ? (
@@ -96,7 +96,7 @@ export function VehicleContext({
 
       <div className="flex-1 overflow-y-auto p-4">
         {/* JSON-like specs */}
-        <div className="rounded-md border border-border/50 bg-surface-0 p-3">
+        <div className="rounded-lg border border-border/50 bg-surface-2 p-3">
           <div className="font-mono text-xs">
             <span className="text-muted-foreground">{"{"}</span>
             {hasData ? (
@@ -134,20 +134,20 @@ export function VehicleContext({
               <motion.div
                 initial={{ opacity: 0, y: 4 }}
                 animate={{ opacity: 1, y: 0 }}
-                className={`glow-border flex items-start gap-2.5 rounded-md p-3 ${
+                className={`glow-border flex items-start gap-2.5 rounded-lg p-3 ${
                   apkDaysAlert.severity === "warning"
-                    ? "bg-syntax-orange/5"
-                    : "bg-syntax-cyan/5"
+                    ? "bg-amber-50"
+                    : "bg-orange-50"
                 }`}
               >
                 <AlertTriangle
                   className={`mt-0.5 h-3.5 w-3.5 shrink-0 ${
                     apkDaysAlert.severity === "warning"
-                      ? "text-syntax-orange"
-                      : "text-syntax-cyan"
+                      ? "text-amber-600"
+                      : "text-[#ea580c]"
                   }`}
                 />
-                <span className="font-mono text-[11px] leading-4 text-foreground/80">
+                <span className="text-[11px] leading-4 text-foreground/80">
                   {apkDaysAlert.message}
                 </span>
               </motion.div>
@@ -157,20 +157,20 @@ export function VehicleContext({
                 key={i}
                 initial={{ opacity: 0, y: 4 }}
                 animate={{ opacity: 1, y: 0 }}
-                className={`glow-border flex items-start gap-2.5 rounded-md p-3 ${
+                className={`glow-border flex items-start gap-2.5 rounded-lg p-3 ${
                   alert.severity === "warning"
-                    ? "bg-syntax-orange/5"
-                    : "bg-syntax-cyan/5"
+                    ? "bg-amber-50"
+                    : "bg-orange-50"
                 }`}
               >
                 <AlertTriangle
                   className={`mt-0.5 h-3.5 w-3.5 shrink-0 ${
                     alert.severity === "warning"
-                      ? "text-syntax-orange"
-                      : "text-syntax-cyan"
+                      ? "text-amber-600"
+                      : "text-[#ea580c]"
                   }`}
                 />
-                <span className="font-mono text-[11px] leading-4 text-foreground/80">
+                <span className="text-[11px] leading-4 text-foreground/80">
                   {alert.message}
                 </span>
               </motion.div>

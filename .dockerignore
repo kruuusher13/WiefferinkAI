@@ -1,0 +1,17 @@
+garage-ai-command-center/node_modules/
+garage-ai-command-center/.next/
+garage-ai-command-center/out/
+.git/
+.env
+__pycache__/
+*.pyc
+.venv/
+node_modules/
+.coverage
+.github/
+google_calendar_tokens.json
+_bmad/
+tests/
+*.md
+transcripts/
+.claude/

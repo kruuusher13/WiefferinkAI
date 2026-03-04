@@ -1,24 +1,24 @@
 import type { Metadata, Viewport } from 'next'
-import { Geist, Geist_Mono } from 'next/font/google'
+import { Inter, JetBrains_Mono } from 'next/font/google'
 
 import './globals.css'
 
-const geistSans = Geist({
+const inter = Inter({
   subsets: ['latin'],
-  variable: '--font-geist-sans',
+  variable: '--font-inter',
 })
-const geistMono = Geist_Mono({
+const jetbrainsMono = JetBrains_Mono({
   subsets: ['latin'],
-  variable: '--font-geist-mono',
+  variable: '--font-mono',
 })
 
 export const metadata: Metadata = {
-  title: 'GarageAI Command Center',
-  description: 'A spatial workbench where AI and humans collaborate on customer service',
+  title: 'TorxFlow',
+  description: 'AI-powered receptionist for automotive garages',
 }
 
 export const viewport: Viewport = {
-  themeColor: '#1e1e1e',
+  themeColor: '#ffffff',
   userScalable: false,
 }
 
@@ -28,8 +28,8 @@ export default function RootLayout({
   children: React.ReactNode
 }>) {
   return (
-    <html lang="en" className={`${geistSans.variable} ${geistMono.variable}`}>
-      <body className="font-sans antialiased overflow-hidden">{children}</body>
+    <html lang="en" className={`${inter.variable} ${jetbrainsMono.variable}`}>
+      <body className="font-sans antialiased">{children}</body>
     </html>
   )
 }

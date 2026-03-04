@@ -4,7 +4,7 @@ import scipy.signal
 
 class AudioResampler:
     """
-    Handles audio resampling and format conversion for the GarageAI telephony bridge.
+    Handles audio resampling and format conversion for the TorxFlow telephony bridge.
     
     Sample Rate Reference:
     ┌─────────────────────────┬──────────────┬───────────────┐
@@ -133,6 +133,30 @@ class AudioResampler:
         
         return mulaw_bytes.tobytes()
     
+    # ============================================================
+    # TAKEOVER PATH: 16kHz PCM → 8kHz Mu-law (owner mic → Twilio)
+    # ============================================================
+
+    def pcm_16k_to_mulaw(self, pcm_16k_data: bytes) -> bytes:
+        """
+        Convert owner's 16kHz PCM mic audio to 8kHz mu-law for Twilio output.
+
+        Path: Owner Mic (16kHz PCM) → Bridge → Twilio (8kHz mu-law)
+        """
+        if not pcm_16k_data:
+            return b""
+
+        pcm_16k = np.frombuffer(pcm_16k_data, dtype=np.int16)
+        target_samples = len(pcm_16k) // 2
+        if target_samples < 1:
+            target_samples = 1
+        pcm_8k = scipy.signal.resample(pcm_16k, target_samples).astype(np.int16)
+
+        indices = pcm_8k.view(np.uint16)
+        mulaw_bytes = self.lin2mu_table[indices]
+
+        return mulaw_bytes.tobytes()
+
     # Legacy function - DEPRECATED, use pcm_24k_to_mulaw instead
     def pcm_to_mulaw(self, pcm_16k_data: bytes) -> bytes:
         """

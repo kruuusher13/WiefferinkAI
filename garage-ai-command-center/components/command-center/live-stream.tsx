@@ -7,19 +7,19 @@ import { Waveform } from "./waveform"
 import { useGarageStore } from "@/lib/store"
 
 const KEYWORD_COLORS: Record<string, string> = {
-  afspraak: "text-syntax-cyan",
-  kosten: "text-syntax-orange",
-  klaar: "text-syntax-lime",
-  morgen: "text-syntax-purple",
-  auto: "text-syntax-pink",
-  reparatie: "text-syntax-cyan",
-  band: "text-syntax-orange",
-  olie: "text-syntax-lime",
-  apk: "text-syntax-purple",
-  betaling: "text-syntax-pink",
-  kenteken: "text-syntax-cyan",
-  beurt: "text-syntax-orange",
-  remmen: "text-syntax-lime",
+  afspraak: "text-[#ea580c]",
+  kosten: "text-amber-600",
+  klaar: "text-green-600",
+  morgen: "text-violet-600",
+  auto: "text-pink-600",
+  reparatie: "text-[#ea580c]",
+  band: "text-amber-600",
+  olie: "text-green-600",
+  apk: "text-violet-600",
+  betaling: "text-pink-600",
+  kenteken: "text-[#ea580c]",
+  beurt: "text-amber-600",
+  remmen: "text-green-600",
 }
 
 function highlightKeywords(text: string, keywords?: string[]) {
@@ -39,7 +39,7 @@ function highlightKeywords(text: string, keywords?: string[]) {
       if (idx !== -1 && (earliestMatch === -1 || idx < earliestMatch)) {
         earliestMatch = idx
         earliestKeyword = keyword
-        earliestColor = KEYWORD_COLORS[keyword] || "text-syntax-cyan"
+        earliestColor = KEYWORD_COLORS[keyword] || "text-[#ea580c]"
       }
     }
 
@@ -99,31 +99,31 @@ export function LiveStream({
   }, [transcript.length])
 
   return (
-    <div className="flex h-full flex-col overflow-hidden rounded-lg border border-border bg-surface-1">
+    <div className="flex h-full flex-col overflow-hidden rounded-2xl border border-[hsl(var(--card-border))] bg-card">
       {/* Header */}
       <div className="flex items-center justify-between border-b border-border px-4 py-2.5">
         <div className="flex items-center gap-3">
           <div className="flex items-center gap-1.5">
-            <span className={`h-3 w-3 rounded-full ${isActive ? "bg-destructive" : "bg-muted-foreground/30"}`} />
-            <span className={`h-3 w-3 rounded-full ${isActive ? "bg-syntax-orange" : "bg-muted-foreground/30"}`} />
-            <span className={`h-3 w-3 rounded-full ${isActive ? "bg-syntax-lime" : "bg-muted-foreground/30"}`} />
+            <span className={`h-3 w-3 rounded-full ${isActive ? "bg-red-500" : "bg-neutral-200"}`} />
+            <span className={`h-3 w-3 rounded-full ${isActive ? "bg-amber-500" : "bg-neutral-200"}`} />
+            <span className={`h-3 w-3 rounded-full ${isActive ? "bg-green-500" : "bg-neutral-200"}`} />
           </div>
-          <h2 className="font-mono text-xs font-medium text-foreground">
-            live_stream.voice
+          <h2 className="text-xs font-semibold text-foreground">
+            Live Transcript
           </h2>
           {isActive ? (
-            <span className="rounded-sm bg-syntax-lime/10 px-1.5 py-0.5 font-mono text-[10px] text-syntax-lime">
+            <span className="rounded-full bg-[#ea580c]/10 px-2 py-0.5 text-[10px] font-medium text-[#ea580c]">
               ACTIVE
             </span>
           ) : (
-            <span className="rounded-sm bg-muted-foreground/10 px-1.5 py-0.5 font-mono text-[10px] text-muted-foreground">
+            <span className="rounded-full bg-neutral-100 px-2 py-0.5 text-[10px] font-medium text-muted-foreground">
               WAITING
             </span>
           )}
         </div>
         <button
           onClick={onToggleFocus}
-          className="rounded-md p-1 text-muted-foreground transition-colors hover:bg-surface-2 hover:text-foreground"
+          className="rounded-lg p-1 text-muted-foreground transition-colors hover:bg-surface-2 hover:text-foreground"
           aria-label={isFocused ? "Minimize" : "Maximize"}
         >
           {isFocused ? (
@@ -139,7 +139,7 @@ export function LiveStream({
         <div className="flex flex-col gap-1">
           {!hasTranscript && (
             <div className="flex items-center justify-center py-8">
-              <span className="font-mono text-xs text-muted-foreground/50">
+              <span className="text-xs text-muted-foreground/50">
                 {isActive ? "Waiting for conversation..." : "Connect to start"}
               </span>
             </div>
@@ -151,21 +151,21 @@ export function LiveStream({
                 initial={{ opacity: 0, y: 8 }}
                 animate={{ opacity: 1, y: 0 }}
                 transition={{ duration: 0.2 }}
-                className="group flex gap-3 rounded-md px-2 py-1.5 transition-colors hover:bg-surface-2/50"
+                className="group flex gap-3 rounded-lg px-2 py-1.5 transition-colors hover:bg-surface-2/50"
               >
                 <span className="shrink-0 font-mono text-[10px] leading-5 text-muted-foreground">
                   {line.timestamp}
                 </span>
                 <span
-                  className={`shrink-0 font-mono text-[10px] font-semibold leading-5 ${
+                  className={`shrink-0 text-[10px] font-semibold leading-5 ${
                     line.speaker === "harry"
-                      ? "text-syntax-cyan"
-                      : "text-syntax-orange"
+                      ? "text-[#ea580c]"
+                      : "text-amber-600"
                   }`}
                 >
                   {line.speaker === "harry" ? "HARRY" : "CALLER"}
                 </span>
-                <span className="font-mono text-xs leading-5 text-foreground/80">
+                <span className="text-xs leading-5 text-foreground/80">
                   {highlightKeywords(line.text, line.keywords)}
                 </span>
               </motion.div>
@@ -184,7 +184,7 @@ export function LiveStream({
                 <span className="shrink-0 font-mono text-[10px] text-muted-foreground/40">
                   {"      "}
                 </span>
-                <span className="shrink-0 font-mono text-[10px] font-semibold text-syntax-cyan/50">
+                <span className="shrink-0 text-[10px] font-semibold text-[#ea580c]/50">
                   HARRY
                 </span>
                 <span className="flex items-center gap-1">

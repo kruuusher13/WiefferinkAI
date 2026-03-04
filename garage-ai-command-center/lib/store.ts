@@ -25,15 +25,16 @@ export interface VehicleAlert {
 export interface ActionProposal {
   id: number
   title: string
-  type: "appointment" | "invoice" | "notification" | "part_check"
+  type: "appointment"
   current: Record<string, string>
   proposed: Record<string, string>
   status: "pending" | "accepted" | "editing"
-  werkorder_id?: number
+  calendar_event_id?: string
+  calendar_link?: string
 }
 
 type WsStatus = "disconnected" | "connecting" | "connected"
-type CallState = "idle" | "incoming" | "harry_talking" | "processing"
+type CallState = "idle" | "incoming" | "harry_talking" | "processing" | "takeover"
 
 // --- Keyword detection for syntax highlighting ---
 
@@ -50,24 +51,8 @@ function detectKeywords(text: string): string[] {
 // --- Tool result parsers ---
 
 function parseCustomerName(result: string): string | null {
-  // "Klant gevonden: Jan de Vries (KlantID: 5)"
   const match = result.match(/Klant gevonden:\s*(.+?)\s*\(/)
   return match ? match[1].trim() : null
-}
-
-function parseVehicleRdw(result: string): Record<string, string> | null {
-  // Parse key: value pairs from RDW lookup result
-  const data: Record<string, string> = {}
-  const lines = result.split("\n").filter(Boolean)
-  for (const line of lines) {
-    const sep = line.indexOf(":")
-    if (sep > 0) {
-      const key = line.slice(0, sep).trim().toLowerCase().replace(/\s+/g, "_")
-      const val = line.slice(sep + 1).trim()
-      if (key && val) data[key] = val
-    }
-  }
-  return Object.keys(data).length > 0 ? data : null
 }
 
 function parseApkAlert(result: string): VehicleAlert | null {
@@ -82,7 +67,7 @@ function parseRecallAlert(result: string): VehicleAlert | null {
   return { message: result.slice(0, 120), severity: "warning" }
 }
 
-// --- Kenteken regex: matches Dutch license plates like AB-123-CD, 31-ZZ-ND, AB123CD ---
+// --- Kenteken regex ---
 const KENTEKEN_REGEX = /\b([A-Z0-9]{1,3}[-\s]?[A-Z0-9]{2,3}[-\s]?[A-Z0-9]{1,3})\b/gi
 
 function extractKenteken(text: string): string | null {
@@ -90,7 +75,6 @@ function extractKenteken(text: string): string | null {
   if (!matches) return null
   for (const m of matches) {
     const clean = m.replace(/[-\s]/g, "").toUpperCase()
-    // Dutch plates are 6 chars, mix of letters and digits (not all letters, not all digits)
     if (clean.length === 6 && /[A-Z]/.test(clean) && /[0-9]/.test(clean)) {
       return clean
     }
@@ -105,38 +89,29 @@ async function fetchRdwLookup(
   set: (partial: Partial<GarageStore>) => void,
   get: () => GarageStore
 ) {
-  if (get().vehicleData) return // Already loaded
+  if (get().vehicleData) return
   try {
-    const resp = await fetch(`/api/rdw-lookup/${encodeURIComponent(kenteken)}`)
+    const bridgeUrl = process.env.NEXT_PUBLIC_BRIDGE_URL || (typeof window !== "undefined" ? window.location.origin : "http://localhost:8000")
+    const resp = await fetch(`${bridgeUrl}/api/rdw-lookup/${encodeURIComponent(kenteken)}`)
     const json = await resp.json()
-    if (json.status === "success" && json.data && !get().vehicleData) {
+    if (json.status === "success" && json.data) {
       set({ vehicleData: json.data })
     }
-  } catch {
-    // Silently fail — tool_result fallback will handle
+  } catch (err) {
+    console.error("[RDW Lookup] fetch failed:", err)
   }
 }
 
 // --- Map tool_call to proposal type ---
 
 function toolToProposalType(name: string): ActionProposal["type"] | null {
-  switch (name) {
-    case "schedule_appointment": return "appointment"
-    case "generate_payment_link": return "invoice"
-    case "get_service_price": return "invoice"
-    case "check_part_stock": return "part_check"
-    default: return null
-  }
+  if (name === "request_appointment") return "appointment"
+  return null
 }
 
 function toolToProposalTitle(name: string, args: Record<string, string>): string {
-  switch (name) {
-    case "schedule_appointment": return `Schedule: ${args.description || "Appointment"}`
-    case "generate_payment_link": return "Generate Payment Link"
-    case "get_service_price": return `Price: ${args.service_type || "Service"}`
-    case "check_part_stock": return `Part: ${args.part_name || "Unknown"}`
-    default: return name
-  }
+  if (name === "request_appointment") return `Appointment: ${args.description || "Request"}`
+  return name
 }
 
 // --- Store ---
@@ -148,6 +123,9 @@ interface GarageStore {
   callStartTime: number | null
   customerName: string | null
   sentiment: string
+
+  // Takeover
+  isTakeover: boolean
 
   // Transcript
   transcript: TranscriptLine[]
@@ -168,6 +146,10 @@ interface GarageStore {
   audioLevel: number
   isMicActive: boolean
 
+  // Calendar
+  calendarConnected: boolean
+  calendarLoading: boolean
+
   // Custom Instructions
   customInstructions: string
   customInstructionsStatus: "idle" | "saving" | "saved" | "error"
@@ -181,8 +163,12 @@ interface GarageStore {
   disconnect: () => void
   toggleMic: () => Promise<void>
   sendText: (text: string) => void
+  startTakeover: () => Promise<void>
+  stopTakeover: () => void
   acceptProposal: (id: number) => Promise<void>
   editProposal: (id: number) => void
+  checkCalendarStatus: () => Promise<void>
+  disconnectCalendar: () => Promise<void>
   loadCustomInstructions: () => Promise<void>
   saveCustomInstructions: (text: string) => Promise<void>
 }
@@ -196,6 +182,7 @@ export const useGarageStore = create<GarageStore>((set, get) => ({
   callStartTime: null,
   customerName: null,
   sentiment: "😐",
+  isTakeover: false,
   transcript: [],
   nextTranscriptId: 1,
   thoughts: [],
@@ -205,6 +192,8 @@ export const useGarageStore = create<GarageStore>((set, get) => ({
   nextProposalId: 1,
   audioLevel: 0,
   isMicActive: false,
+  calendarConnected: false,
+  calendarLoading: false,
   customInstructions: "",
   customInstructionsStatus: "idle",
   _ws: null,
@@ -216,11 +205,19 @@ export const useGarageStore = create<GarageStore>((set, get) => ({
 
     set({ wsStatus: "connecting" })
 
-    const bridgeUrl = process.env.NEXT_PUBLIC_BRIDGE_URL || "http://localhost:8000"
-    const wsUrl = bridgeUrl.replace(/^http/, "ws") + "/ws/web"
-    const ws = new WebSocket(wsUrl)
-    const audio = new AudioEngine()
-    audio.initPlayback()
+    let ws: WebSocket
+    let audio: AudioEngine
+    try {
+      const bridgeUrl = process.env.NEXT_PUBLIC_BRIDGE_URL || (typeof window !== "undefined" ? window.location.origin : "http://localhost:8000")
+      const wsUrl = bridgeUrl.replace(/^http/, "ws") + "/ws/web"
+      ws = new WebSocket(wsUrl)
+      audio = new AudioEngine()
+      audio.initPlayback()
+    } catch (err) {
+      console.error("Failed to connect:", err)
+      set({ wsStatus: "disconnected" })
+      return
+    }
 
     ws.onopen = () => {
       set({
@@ -233,12 +230,13 @@ export const useGarageStore = create<GarageStore>((set, get) => ({
         vehicleAlerts: [],
         customerName: null,
         sentiment: "😐",
+        isTakeover: false,
       })
       transcriptIdCounter = 0
     }
 
     ws.onclose = () => {
-      set({ wsStatus: "disconnected", callState: "idle", callStartTime: null })
+      set({ wsStatus: "disconnected", callState: "idle", callStartTime: null, isTakeover: false })
       audio.destroy()
     }
 
@@ -247,7 +245,10 @@ export const useGarageStore = create<GarageStore>((set, get) => ({
     }
 
     ws.onmessage = (event) => {
-      const data = JSON.parse(event.data)
+      let data: any
+      try {
+        data = JSON.parse(event.data)
+      } catch { return }
       const state = get()
 
       switch (data.type) {
@@ -268,7 +269,7 @@ export const useGarageStore = create<GarageStore>((set, get) => ({
             ],
           })
 
-          // Proactive kenteken detection in transcript text
+          // Proactive kenteken detection
           if (!get().vehicleData) {
             const detected = extractKenteken(data.text)
             if (detected) {
@@ -292,15 +293,13 @@ export const useGarageStore = create<GarageStore>((set, get) => ({
         }
 
         case "vehicle_data": {
-          // Structured vehicle data from backend WS
-          if (data.data && !get().vehicleData) {
+          if (data.data) {
             set({ vehicleData: data.data })
           }
           break
         }
 
         case "sentiment": {
-          // Backend sends either emoji ("🙂") or word ("happy")
           const sentimentMap: Record<string, string> = {
             happy: "🙂", neutral: "😐", frustrated: "😠", sad: "😢",
           }
@@ -328,12 +327,12 @@ export const useGarageStore = create<GarageStore>((set, get) => ({
             set({ proposals: [...state.proposals, proposal] })
           }
 
-          // Customer identification
-          if (data.name === "identify_customer") {
-            // Will be resolved on tool_result
+          // Extract customer name from request_appointment args
+          if (data.name === "request_appointment" && data.args?.customer_name) {
+            set({ customerName: data.args.customer_name })
           }
 
-          // Proactive RDW lookup when tool_call arrives (don't wait for result)
+          // Proactive RDW lookup
           if (data.name === "lookup_vehicle_rdw" && data.args?.kenteken) {
             const cleanKt = data.args.kenteken.replace(/[-\s]/g, "").toUpperCase()
             fetchRdwLookup(cleanKt, set, get)
@@ -344,19 +343,20 @@ export const useGarageStore = create<GarageStore>((set, get) => ({
         case "tool_result": {
           const result = data.result || ""
 
-          // Update vehicle context based on tool
-          if (data.name === "identify_customer") {
-            const name = parseCustomerName(result)
-            if (name) set({ customerName: name })
-          }
-
           if (data.name === "lookup_vehicle_rdw") {
-            // If vehicle_data already set by proactive lookup or WS message, skip
             if (!get().vehicleData) {
-              const vd = parseVehicleRdw(result)
-              if (vd) {
-                set({ vehicleData: vd })
+              // Try to parse from result text
+              const vd: Record<string, string> = {}
+              const lines = result.split("\n").filter(Boolean)
+              for (const line of lines) {
+                const sep = line.indexOf(":")
+                if (sep > 0) {
+                  const key = line.slice(0, sep).trim().toLowerCase().replace(/\s+/g, "_")
+                  const val = line.slice(sep + 1).trim()
+                  if (key && val) vd[key] = val
+                }
               }
+              if (Object.keys(vd).length > 0) set({ vehicleData: vd })
             }
           }
 
@@ -370,15 +370,7 @@ export const useGarageStore = create<GarageStore>((set, get) => ({
             if (alert) set({ vehicleAlerts: [...get().vehicleAlerts, alert] })
           }
 
-          // Update proposal with result
-          if (data.name === "check_werkorder_status") {
-            const vd = parseVehicleRdw(result) // Same key:value format
-            if (vd) {
-              set({ vehicleData: { ...(get().vehicleData || {}), ...vd } })
-            }
-          }
-
-          // Update latest matching proposal status
+          // Update latest matching proposal with result
           const pType = toolToProposalType(data.name)
           if (pType) {
             const proposals = [...get().proposals]
@@ -412,6 +404,7 @@ export const useGarageStore = create<GarageStore>((set, get) => ({
       callState: "idle",
       callStartTime: null,
       isMicActive: false,
+      isTakeover: false,
       audioLevel: 0,
     })
   },
@@ -443,7 +436,6 @@ export const useGarageStore = create<GarageStore>((set, get) => ({
     if (!_ws || _ws.readyState !== WebSocket.OPEN || !text.trim()) return
     _ws.send(JSON.stringify({ type: "text", text: text.trim() }))
 
-    // Add to transcript as user message
     const now = new Date()
     const ts = `${String(now.getHours()).padStart(2, "0")}:${String(now.getMinutes()).padStart(2, "0")}:${String(now.getSeconds()).padStart(2, "0")}`
     transcriptIdCounter++
@@ -455,32 +447,92 @@ export const useGarageStore = create<GarageStore>((set, get) => ({
     })
   },
 
+  startTakeover: async () => {
+    const { _ws, _audio } = get()
+    if (!_ws || _ws.readyState !== WebSocket.OPEN) return
+
+    // Signal backend to start takeover
+    _ws.send(JSON.stringify({ type: "takeover", action: "start" }))
+
+    // Start mic capture, send as takeover_audio
+    if (_audio) {
+      await _audio.initCapture(
+        (b64) => {
+          if (_ws.readyState === WebSocket.OPEN) {
+            _ws.send(JSON.stringify({ type: "takeover_audio", data: b64 }))
+          }
+        },
+        (level) => {
+          set({ audioLevel: level })
+        }
+      )
+    }
+
+    set({ isTakeover: true, callState: "takeover", isMicActive: true })
+  },
+
+  stopTakeover: () => {
+    const { _ws, _audio } = get()
+    if (!_ws || _ws.readyState !== WebSocket.OPEN) return
+
+    _ws.send(JSON.stringify({ type: "takeover", action: "stop" }))
+
+    if (_audio) {
+      _audio.stopCapture()
+    }
+
+    set({ isTakeover: false, callState: "idle", isMicActive: false, audioLevel: 0 })
+  },
+
   acceptProposal: async (id: number) => {
     const proposal = get().proposals.find((p) => p.id === id)
     if (!proposal) return
 
     try {
-      const resp = await fetch("/api/werkorder", {
+      const bridgeUrl = process.env.NEXT_PUBLIC_BRIDGE_URL || (typeof window !== "undefined" ? window.location.origin : "http://localhost:8000")
+      const payload = {
+        description: proposal.proposed.description || proposal.title,
+        date_time: proposal.proposed.date_time || "",
+        customer_name: proposal.proposed.customer_name || get().customerName || "",
+        customer_phone: proposal.proposed.phone_number || "",
+        customer_email: proposal.proposed.customer_email || "",
+        kenteken: proposal.proposed.kenteken || get().vehicleData?.kenteken || "",
+        duration_minutes: 60,
+      }
+      console.log("[AcceptProposal] Sending:", payload)
+      const resp = await fetch(`${bridgeUrl}/api/appointment/accept`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          description: proposal.proposed.description || proposal.title,
-          customer_name: proposal.proposed.customer_name || get().customerName || undefined,
-          phone_number: proposal.proposed.phone_number || undefined,
-          kenteken: proposal.proposed.kenteken || get().vehicleData?.kenteken || undefined,
-          date_time: proposal.proposed.date_time || undefined,
-        }),
+        body: JSON.stringify(payload),
       })
       const json = await resp.json()
+      console.log("[AcceptProposal] Response:", json)
       if (json.status === "success") {
         set({
           proposals: get().proposals.map((p) =>
-            p.id === id ? { ...p, status: "accepted" as const, werkorder_id: json.werkorder_id } : p
+            p.id === id
+              ? {
+                  ...p,
+                  status: "accepted" as const,
+                  calendar_event_id: json.calendar_event_id,
+                  calendar_link: json.calendar_link,
+                }
+              : p
+          ),
+        })
+      } else {
+        console.error("[AcceptProposal] Failed:", json.message || json)
+        // Mark as error so user sees feedback
+        set({
+          proposals: get().proposals.map((p) =>
+            p.id === id
+              ? { ...p, proposed: { ...p.proposed, _error: json.message || "Failed to accept" } }
+              : p
           ),
         })
       }
-    } catch {
-      // Keep as pending on failure
+    } catch (err) {
+      console.error("[AcceptProposal] Error:", err)
     }
   },
 
@@ -490,6 +542,28 @@ export const useGarageStore = create<GarageStore>((set, get) => ({
         p.id === id ? { ...p, status: "editing" as const } : p
       ),
     })
+  },
+
+  checkCalendarStatus: async () => {
+    set({ calendarLoading: true })
+    try {
+      const resp = await fetch("/api/calendar/status")
+      const json = await resp.json()
+      set({ calendarConnected: json.connected === true })
+    } catch {
+      set({ calendarConnected: false })
+    } finally {
+      set({ calendarLoading: false })
+    }
+  },
+
+  disconnectCalendar: async () => {
+    try {
+      await fetch("/api/calendar/disconnect", { method: "POST" })
+      set({ calendarConnected: false })
+    } catch {
+      // Silently fail
+    }
   },
 
   loadCustomInstructions: async () => {
@@ -513,12 +587,10 @@ export const useGarageStore = create<GarageStore>((set, get) => ({
       const json = await resp.json()
       if (json.status === "success") {
         set({ customInstructions: text, customInstructionsStatus: "saved" })
-        // Send update_prompt to active WebSocket session
         const ws = get()._ws
         if (ws && ws.readyState === WebSocket.OPEN) {
           ws.send(JSON.stringify({ type: "update_prompt", prompt: text }))
         }
-        // Reset status after 2s
         setTimeout(() => set({ customInstructionsStatus: "idle" }), 2000)
       } else {
         set({ customInstructionsStatus: "error" })

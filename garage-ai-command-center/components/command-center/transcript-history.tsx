@@ -98,36 +98,36 @@ export function TranscriptHistory({
   }
 
   const roleColor = (role: string) => {
-    if (role === "assistant") return "text-syntax-cyan"
-    if (role === "user") return "text-syntax-orange"
+    if (role === "assistant") return "text-[#ea580c]"
+    if (role === "user") return "text-amber-600"
     return "text-muted-foreground"
   }
 
   return (
-    <div className="flex h-full flex-col rounded-lg border border-border bg-surface-1">
+    <div className="flex h-full flex-col rounded-2xl border border-[hsl(var(--card-border))] bg-card">
       {/* Header */}
       <div className="flex items-center justify-between border-b border-border px-3 py-1.5">
         <div className="flex items-center gap-2">
           {selected && (
             <button
               onClick={() => setSelected(null)}
-              className="rounded p-1 text-muted-foreground transition-colors hover:bg-surface-2 hover:text-foreground"
+              className="rounded-lg p-1 text-muted-foreground transition-colors hover:bg-surface-2 hover:text-foreground"
             >
               <ArrowLeft size={13} />
             </button>
           )}
-          <span className="font-mono text-[11px] font-semibold tracking-wide text-muted-foreground">
-            {selected ? `transcript/${selected.id.split("_")[2] || selected.channel}` : "transcript-history"}
+          <span className="text-[11px] font-semibold tracking-wide text-foreground">
+            {selected ? `History / ${selected.id.split("_")[2] || selected.channel}` : "History"}
           </span>
           {!selected && transcripts.length > 0 && (
-            <span className="rounded-sm bg-muted-foreground/10 px-1.5 py-0.5 font-mono text-[10px] text-muted-foreground">
+            <span className="rounded-full bg-neutral-100 px-2 py-0.5 text-[10px] font-medium text-muted-foreground">
               {transcripts.length}
             </span>
           )}
         </div>
         <button
           onClick={onToggleFocus}
-          className="rounded p-1 text-muted-foreground transition-colors hover:bg-surface-2 hover:text-foreground"
+          className="rounded-lg p-1 text-muted-foreground transition-colors hover:bg-surface-2 hover:text-foreground"
         >
           {isFocused ? <Minimize2 size={13} /> : <Maximize2 size={13} />}
         </button>
@@ -137,7 +137,7 @@ export function TranscriptHistory({
       <div ref={scrollRef} className="flex-1 overflow-y-auto">
         {loading && (
           <div className="flex items-center justify-center py-8">
-            <span className="font-mono text-xs text-muted-foreground/50">Loading...</span>
+            <span className="text-xs text-muted-foreground/50">Loading...</span>
           </div>
         )}
 
@@ -145,7 +145,7 @@ export function TranscriptHistory({
           <div className="flex flex-col">
             {transcripts.length === 0 ? (
               <div className="flex items-center justify-center py-8">
-                <span className="font-mono text-xs text-muted-foreground/50">
+                <span className="text-xs text-muted-foreground/50">
                   No transcripts yet
                 </span>
               </div>
@@ -161,7 +161,7 @@ export function TranscriptHistory({
                   </span>
                   <div className="min-w-0 flex-1">
                     <div className="flex items-center gap-2">
-                      <span className="font-mono text-[11px] text-foreground">
+                      <span className="text-[11px] font-medium text-foreground">
                         {formatDate(t.date)}
                       </span>
                       <span className="font-mono text-[10px] text-muted-foreground">
@@ -172,7 +172,7 @@ export function TranscriptHistory({
                       </span>
                     </div>
                     {t.preview && (
-                      <p className="truncate font-mono text-[10px] text-muted-foreground/70">
+                      <p className="truncate text-[10px] text-muted-foreground/70">
                         {t.preview}
                       </p>
                     )}
@@ -192,15 +192,15 @@ export function TranscriptHistory({
                   initial={{ opacity: 0, y: 4 }}
                   animate={{ opacity: 1, y: 0 }}
                   transition={{ duration: 0.15, delay: Math.min(i * 0.02, 0.5) }}
-                  className="group flex gap-3 rounded-md px-2 py-1 transition-colors hover:bg-surface-2/50"
+                  className="group flex gap-3 rounded-lg px-2 py-1 transition-colors hover:bg-surface-2/50"
                 >
                   <span className="shrink-0 font-mono text-[10px] leading-5 text-muted-foreground/60">
                     {entry.timestamp ? new Date(entry.timestamp).toLocaleTimeString("nl-NL", { hour: "2-digit", minute: "2-digit", second: "2-digit" }) : ""}
                   </span>
-                  <span className={`shrink-0 font-mono text-[10px] font-semibold leading-5 ${roleColor(entry.role)}`}>
+                  <span className={`shrink-0 text-[10px] font-semibold leading-5 ${roleColor(entry.role)}`}>
                     {roleLabel(entry.role)}
                   </span>
-                  <span className={`font-mono text-xs leading-5 ${entry.type === "tool_call" || entry.type === "tool_result" ? "text-muted-foreground/60 italic" : "text-foreground/80"}`}>
+                  <span className={`text-xs leading-5 ${entry.type === "tool_call" || entry.type === "tool_result" ? "text-muted-foreground/60 italic" : "text-foreground/80"}`}>
                     {entry.text}
                   </span>
                 </motion.div>

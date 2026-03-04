@@ -51,23 +51,6 @@ const config: Config = {
           '4': 'hsl(var(--chart-4))',
           '5': 'hsl(var(--chart-5))',
         },
-        sidebar: {
-          DEFAULT: 'hsl(var(--sidebar-background))',
-          foreground: 'hsl(var(--sidebar-foreground))',
-          primary: 'hsl(var(--sidebar-primary))',
-          'primary-foreground': 'hsl(var(--sidebar-primary-foreground))',
-          accent: 'hsl(var(--sidebar-accent))',
-          'accent-foreground': 'hsl(var(--sidebar-accent-foreground))',
-          border: 'hsl(var(--sidebar-border))',
-          ring: 'hsl(var(--sidebar-ring))',
-        },
-        syntax: {
-          cyan: 'hsl(var(--syntax-cyan))',
-          lime: 'hsl(var(--syntax-lime))',
-          orange: 'hsl(var(--syntax-orange))',
-          purple: 'hsl(var(--syntax-purple))',
-          pink: 'hsl(var(--syntax-pink))',
-        },
         surface: {
           '0': 'hsl(var(--surface-0))',
           '1': 'hsl(var(--surface-1))',
@@ -76,8 +59,8 @@ const config: Config = {
         },
       },
       fontFamily: {
-        sans: ['var(--font-geist-sans)'],
-        mono: ['var(--font-geist-mono)'],
+        sans: ['var(--font-inter)', 'system-ui', 'sans-serif'],
+        mono: ['var(--font-mono)', 'ui-monospace', 'monospace'],
       },
       borderRadius: {
         lg: 'var(--radius)',

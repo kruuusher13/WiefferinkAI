@@ -69,7 +69,12 @@ export class AudioEngine {
 
   initPlayback(): void {
     // 24kHz for Gemini output audio
-    this.playbackCtx = new AudioContext({ sampleRate: 24000 })
+    try {
+      this.playbackCtx = new AudioContext({ sampleRate: 24000 })
+    } catch {
+      // Fallback to default sample rate if 24kHz not supported
+      this.playbackCtx = new AudioContext()
+    }
   }
 
   playChunk(b64Pcm: string): void {

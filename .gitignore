@@ -30,6 +30,9 @@ frontend.log
 # Custom instructions (user-specific runtime data)
 custom_instructions.json
 
+# Google Calendar OAuth tokens (user-specific runtime data)
+google_calendar_tokens.json
+
 # Transcripts (runtime conversation data)
 transcripts/
 

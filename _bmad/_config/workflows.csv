@@ -1,5 +1,0 @@
-name,description,path,recommended_agent
-feature-development,Full feature development workflow,_bmad/garage/workflows/feature-development/workflow.md,product-manager
-bug-fix,Bug investigation and fix workflow,_bmad/garage/workflows/bug-fix/workflow.md,developer
-code-review,Comprehensive code review,_bmad/garage/workflows/code-review/workflow.md,developer
-release,Release preparation and deployment,_bmad/garage/workflows/release/workflow.md,developer

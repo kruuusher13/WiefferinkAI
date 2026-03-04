@@ -10,55 +10,48 @@
 
 @layer base {
   :root {
-    /* VS Code-inspired deep dark theme */
-    --background: 0 0% 12%;
-    --foreground: 0 0% 90%;
-    --card: 0 0% 14.5%;
-    --card-foreground: 0 0% 90%;
-    --popover: 0 0% 14.5%;
-    --popover-foreground: 0 0% 90%;
-    --primary: 180 100% 70%;
-    --primary-foreground: 0 0% 7%;
-    --secondary: 0 0% 17%;
-    --secondary-foreground: 0 0% 80%;
-    --muted: 0 0% 17%;
-    --muted-foreground: 0 0% 55%;
-    --accent: 82 85% 60%;
-    --accent-foreground: 0 0% 7%;
-    --destructive: 0 72% 55%;
+    /* TorxFlow Light Theme */
+    --background: 0 0% 100%;
+    --foreground: 240 6% 4%;
+    --card: 0 0% 100%;
+    --card-foreground: 240 6% 4%;
+    --card-border: 0 0% 90%;
+    --popover: 0 0% 100%;
+    --popover-foreground: 240 6% 4%;
+    --primary: 21 90% 48%;
+    --primary-foreground: 0 0% 100%;
+    --secondary: 0 0% 96%;
+    --secondary-foreground: 0 0% 32%;
+    --muted: 0 0% 96%;
+    --muted-foreground: 0 0% 32%;
+    --accent: 21 90% 48%;
+    --accent-foreground: 0 0% 100%;
+    --accent-light: 33 100% 97%;
+    --destructive: 0 84% 60%;
     --destructive-foreground: 0 0% 98%;
-    --border: 0 0% 20%;
-    --input: 0 0% 20%;
-    --ring: 180 100% 70%;
-    --radius: 0.5rem;
+    --border: 0 0% 90%;
+    --input: 0 0% 90%;
+    --ring: 21 90% 48%;
+    --radius: 1rem;
 
-    /* Gemini CLI syntax colors */
-    --syntax-cyan: 180 100% 70%;
-    --syntax-lime: 82 85% 60%;
-    --syntax-orange: 30 100% 65%;
-    --syntax-purple: 270 80% 72%;
-    --syntax-pink: 330 85% 65%;
+    /* TorxFlow brand colors */
+    --torx-orange: 21 90% 48%;
+    --torx-gold: 43 72% 52%;
+    --torx-green: 142 71% 45%;
 
     /* Surface tokens */
-    --surface-0: 0 0% 12%;
-    --surface-1: 0 0% 14.5%;
-    --surface-2: 0 0% 17%;
-    --surface-3: 0 0% 20%;
+    --surface-0: 0 0% 100%;
+    --surface-1: 0 0% 98%;
+    --surface-2: 0 0% 96%;
+    --surface-3: 0 0% 90%;
 
-    --sidebar-background: 0 0% 11%;
-    --sidebar-foreground: 0 0% 90%;
-    --sidebar-primary: 180 100% 70%;
-    --sidebar-primary-foreground: 0 0% 7%;
-    --sidebar-accent: 0 0% 17%;
-    --sidebar-accent-foreground: 0 0% 90%;
-    --sidebar-border: 0 0% 20%;
-    --sidebar-ring: 180 100% 70%;
+    --chart-1: 21 90% 48%;
+    --chart-2: 142 71% 45%;
+    --chart-3: 43 72% 52%;
+    --chart-4: 270 50% 60%;
+    --chart-5: 330 65% 55%;
 
-    --chart-1: 180 100% 70%;
-    --chart-2: 82 85% 60%;
-    --chart-3: 30 100% 65%;
-    --chart-4: 270 80% 72%;
-    --chart-5: 330 85% 65%;
+    font-family: var(--font-inter), system-ui, sans-serif;
   }
 }
 
@@ -71,30 +64,34 @@
   }
 }
 
-/* Custom scrollbar for the dark theme */
+/* Custom scrollbar — light theme */
 ::-webkit-scrollbar {
   width: 6px;
   height: 6px;
 }
 ::-webkit-scrollbar-track {
-  background: hsl(0 0% 12%);
+  background: transparent;
 }
 ::-webkit-scrollbar-thumb {
-  background: hsl(0 0% 25%);
+  background: rgba(0, 0, 0, 0.12);
   border-radius: 3px;
 }
 ::-webkit-scrollbar-thumb:hover {
-  background: hsl(0 0% 35%);
+  background: rgba(0, 0, 0, 0.2);
+}
+
+* {
+  scrollbar-color: rgba(0, 0, 0, 0.12) transparent;
 }
 
 /* Glassmorphism utility */
 .glass {
-  background: rgba(37, 37, 38, 0.7);
-  backdrop-filter: blur(12px);
-  -webkit-backdrop-filter: blur(12px);
+  background: rgba(255, 255, 255, 0.8);
+  backdrop-filter: blur(16px);
+  -webkit-backdrop-filter: blur(16px);
 }
 
-/* Gradient border glow for alerts */
+/* Gradient border glow — orange accent */
 .glow-border {
   position: relative;
 }
@@ -104,17 +101,11 @@
   inset: -1px;
   border-radius: inherit;
   padding: 1px;
-  background: linear-gradient(135deg, hsl(180 100% 70%), hsl(270 80% 72%), hsl(330 85% 65%));
+  background: linear-gradient(135deg, hsl(21 90% 48%), hsl(43 72% 52%), hsl(21 90% 48%));
   mask: linear-gradient(#fff 0 0) content-box, linear-gradient(#fff 0 0);
   mask-composite: exclude;
   -webkit-mask-composite: xor;
   pointer-events: none;
-}
-
-/* Waveform animation */
-@keyframes waveform {
-  0%, 100% { transform: scaleY(0.3); }
-  50% { transform: scaleY(1); }
 }
 
 /* Pulse ring */

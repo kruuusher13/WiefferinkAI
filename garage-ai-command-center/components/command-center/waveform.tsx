@@ -2,7 +2,7 @@
 
 import { useEffect, useRef } from "react"
 
-const CYAN = { r: 102, g: 255, b: 255 } // hsl(180, 100%, 70%)
+const ORANGE = { r: 234, g: 88, b: 12 } // #ea580c
 
 export function Waveform({
   isActive = true,
@@ -79,7 +79,6 @@ export function Waveform({
       ctx.moveTo(0, centerY)
       for (let x = 0; x < w; x++) {
         const normalizedX = x / w
-        // Composite wave: primary + harmonic overtones
         const wave =
           Math.sin(normalizedX * Math.PI * 4 + time) * 0.6 +
           Math.sin(normalizedX * Math.PI * 7 + time * 1.3) * 0.25 +
@@ -87,7 +86,7 @@ export function Waveform({
         const y = centerY + wave * amplitude
         ctx.lineTo(x, y)
       }
-      ctx.strokeStyle = `rgba(${CYAN.r}, ${CYAN.g}, ${CYAN.b}, ${opacity * 0.15})`
+      ctx.strokeStyle = `rgba(${ORANGE.r}, ${ORANGE.g}, ${ORANGE.b}, ${opacity * 0.15})`
       ctx.lineWidth = 6
       ctx.lineCap = "round"
       ctx.lineJoin = "round"
@@ -105,7 +104,7 @@ export function Waveform({
         const y = centerY + wave * amplitude
         ctx.lineTo(x, y)
       }
-      ctx.strokeStyle = `rgba(${CYAN.r}, ${CYAN.g}, ${CYAN.b}, ${opacity * 0.35})`
+      ctx.strokeStyle = `rgba(${ORANGE.r}, ${ORANGE.g}, ${ORANGE.b}, ${opacity * 0.35})`
       ctx.lineWidth = 3
       ctx.stroke()
 
@@ -121,7 +120,7 @@ export function Waveform({
         const y = centerY + wave * amplitude
         ctx.lineTo(x, y)
       }
-      ctx.strokeStyle = `rgba(${CYAN.r}, ${CYAN.g}, ${CYAN.b}, ${opacity})`
+      ctx.strokeStyle = `rgba(${ORANGE.r}, ${ORANGE.g}, ${ORANGE.b}, ${opacity})`
       ctx.lineWidth = 1.5
       ctx.stroke()
 
@@ -129,7 +128,7 @@ export function Waveform({
       ctx.beginPath()
       ctx.moveTo(0, centerY)
       ctx.lineTo(w, centerY)
-      ctx.strokeStyle = `rgba(${CYAN.r}, ${CYAN.g}, ${CYAN.b}, 0.06)`
+      ctx.strokeStyle = `rgba(${ORANGE.r}, ${ORANGE.g}, ${ORANGE.b}, 0.06)`
       ctx.lineWidth = 1
       ctx.stroke()
 

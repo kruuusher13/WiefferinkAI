@@ -5,9 +5,9 @@ steps:
       - '--build-arg'
       - 'NEXT_PUBLIC_BRIDGE_URL=${_BRIDGE_URL}'
       - '-t'
-      - 'gcr.io/$PROJECT_ID/garageai-dashboard'
+      - 'gcr.io/$PROJECT_ID/torxflow-dashboard'
       - '.'
 images:
-  - 'gcr.io/$PROJECT_ID/garageai-dashboard'
+  - 'gcr.io/$PROJECT_ID/torxflow-dashboard'
 substitutions:
-  _BRIDGE_URL: 'https://garageai-bridge-1041143034967.europe-west4.run.app'
+  _BRIDGE_URL: 'https://torxflow-bridge-1041143034967.europe-west4.run.app'

@@ -2,13 +2,7 @@ import os
 from datetime import datetime, timedelta
 from dotenv import load_dotenv
 
-# Load environment variables from .env file
 load_dotenv()
-
-try:
-    import pyodbc
-except ImportError:
-    pyodbc = None
 
 try:
     import requests
@@ -20,223 +14,11 @@ import re
 import json
 import time
 from langchain_core.tools import tool
-from langchain_community.tools import DuckDuckGoSearchRun
 from pydantic import BaseModel, Field
 
-# --- Database Configuration ---
-DB_CONNECTION_STRING = os.getenv(
-    "WINCAR_DB_CONNECTION",
-    r"DRIVER={ODBC Driver 18 for SQL Server};SERVER=localhost;DATABASE=WinCarLive;UID=sa;PWD=StrongPassword123!"
-)
-
-def get_wincar_connection():
-    """Establishes a Read-Only connection to the WinCar SQL Server."""
-    if pyodbc is None:
-        raise ImportError("The 'pyodbc' module could not be imported.")
-    try:
-        conn = pyodbc.connect(DB_CONNECTION_STRING)
-        return conn
-    except pyodbc.Error as e:
-        print(f"Error connecting to WinCar Database: {e}")
-        raise
-
-# --- Communicatie (CRM) Tools ---
-
-class CustomerLookupInput(BaseModel):
-    phone_number: str = Field(description="The phone number of the calling customer (e.g., '+31612345678').")
-
-@tool("identify_customer", args_schema=CustomerLookupInput)
-def identify_customer(phone_number: str) -> str:
-    """
-    WinCar Module: COMMUNICATIE (CRM)
-    Look up a customer by phone number database.
-    """
-    conn = get_wincar_connection()
-    cursor = conn.cursor()
-    try:
-        # Normalize phone (remove spaces/dashes/dots, ensure only digits/plus)
-        # Aggressive cleaning: remove everything except digit and +
-        clean_phone = re.sub(r'[^0-9+]', '', phone_number)
-        
-        # Handle NL extension: if +31, replace with 0
-        if clean_phone.startswith("+31"):
-            clean_phone = "0" + clean_phone[3:]
-        elif clean_phone.startswith("31"): # Handle case where + is missing but country code is present
-             clean_phone = "0" + clean_phone[2:]
-        
-        # Use LIKE for partial match or exact match
-        cursor.execute("SELECT KlantNaam, KlantID FROM Communicatie_Relaties WHERE Telefoon LIKE ?", f"%{clean_phone}%")
-        row = cursor.fetchone()
-        
-        if row:
-            return f"Klant gevonden: {row.KlantNaam} (KlantID: {row.KlantID})."
-        return "Geen klant gevonden met dit nummer in de Communicatie module."
-    finally:
-        conn.close()
-
-# --- Werkplaats (Workshop) Tools ---
-
-class WerkorderStatusInput(BaseModel):
-    license_plate: str = Field(description="The license plate (kenteken) of the vehicle.")
-
-@tool("check_werkorder_status", args_schema=WerkorderStatusInput)
-def check_werkorder_status(license_plate: str) -> str:
-    """
-    WinCar Module: WERKPLAATS
-    Check the status of a work order using the license plate.
-    """
-    conn = get_wincar_connection()
-    cursor = conn.cursor()
-    try:
-        # Join Vehicles and WorkOrders to find the latest status
-        query = """
-        SELECT TOP 1 w.WerkorderID, w.Status, w.Omschrijving 
-        FROM Werkplaats_Werkorders w
-        JOIN Werkplaats_Voertuigen v ON w.VoertuigID = v.VoertuigID
-        WHERE v.Kenteken LIKE ?
-        ORDER BY w.AanmaakDatum DESC
-        """
-        cursor.execute(query, f"%{license_plate}%")
-        row = cursor.fetchone()
-        
-        if row:
-            return f"Werkorder #{row.WerkorderID} voor kenteken {license_plate} staat op status: '{row.Status}'. ({row.Omschrijving})"
-        
-        return f"Geen actieve werkorder gevonden in de Werkplaats module voor kenteken {license_plate}."
-    finally:
-        conn.close()
-
-# --- Magazijn (Warehouse) Tools ---
-
-class PartStockInput(BaseModel):
-    part_name: str = Field(description="The name or code of the part to check.")
-
-@tool("check_part_stock", args_schema=PartStockInput)
-def check_part_stock(part_name: str) -> str:
-    """
-    WinCar Module: MAGAZIJN
-    Check stock availability and price.
-    """
-    conn = get_wincar_connection()
-    cursor = conn.cursor()
-    try:
-        cursor.execute("SELECT Omschrijving, ArtikelCode, VoorraadAantal, Verkoopprijs FROM Magazijn_Artikelen WHERE Omschrijving LIKE ?", f"%{part_name}%")
-        rows = cursor.fetchall()
-        
-        if not rows:
-            return f"Onderdeel '{part_name}' niet gevonden in het Magazijn."
-            
-        result = []
-        for row in rows:
-            status = "op voorraad" if row.VoorraadAantal > 0 else "niet op voorraad"
-            result.append(f"• {row.Omschrijving} (Art: {row.ArtikelCode}) is {status}. Prijs: €{row.Verkoopprijs:.2f}.")
-        
-        return "\n".join(result)
-    finally:
-        conn.close()
-
-# --- Financieel (Financial) Tools ---
-
-class InvoicePaymentInput(BaseModel):
-    werkorder_id: str = Field(description="The ID of the work order to generate a payment link for.")
-
-@tool("generate_payment_link", args_schema=InvoicePaymentInput)
-def generate_payment_link(werkorder_id: str) -> str:
-    """
-    WinCar Module: FINANCIEEL
-    Generates an iDeal payment link for a specific work order.
-    WARNING: This action requires human approval before execution.
-    """
-    return f"Betaallink gegenereerd voor Werkorder {werkorder_id}: https://pay.wincar.nl/ideal/top-garage/{werkorder_id}"
-
-# --- Werkplaats (Planning) Tools ---
-
-class AppointmentInput(BaseModel):
-    date_time: str = Field(description="The requested date and time for the appointment (e.g., '2026-02-01 14:00').")
-    description: str = Field(description="Description of the work needed (e.g., 'APK keuring', 'Grote beurt').")
-    customer_name: str = Field(description="Full name of the customer.")
-    phone_number: str = Field(description="Customer phone number for confirmation.")
-    kenteken: str = Field(description="Vehicle license plate (kenteken).")
-
-@tool("schedule_appointment", args_schema=AppointmentInput)
-def schedule_appointment(
-    date_time: str,
-    description: str,
-    customer_name: str,
-    phone_number: str,
-    kenteken: str
-) -> str:
-    """
-    WinCar Module: WERKPLAATS (Planning)
-    Schedules a new appointment by creating a planned Work Order.
-    Collects customer information and links to vehicle.
-    """
-    conn = get_wincar_connection()
-    cursor = conn.cursor()
-    try:
-        # Step 1: Find or create customer
-        clean_phone = re.sub(r'[^0-9+]', '', phone_number)
-        if clean_phone.startswith("+31"):
-            clean_phone = "0" + clean_phone[3:]
-
-        cursor.execute(
-            "SELECT KlantID FROM Communicatie_Relaties WHERE Telefoon LIKE ?",
-            f"%{clean_phone}%"
-        )
-        row = cursor.fetchone()
-
-        if row:
-            klant_id = row.KlantID
-        else:
-            # Create new customer
-            cursor.execute("""
-                INSERT INTO Communicatie_Relaties (KlantNaam, Telefoon)
-                OUTPUT INSERTED.KlantID
-                VALUES (?, ?)
-            """, customer_name, clean_phone)
-            klant_id = cursor.fetchone()[0]
-            conn.commit()
-
-        # Step 2: Find or create vehicle
-        clean_kenteken = re.sub(r'[^A-Z0-9]', '', kenteken.upper())
-        cursor.execute(
-            "SELECT VoertuigID FROM Werkplaats_Voertuigen WHERE Kenteken = ?",
-            clean_kenteken
-        )
-        vrow = cursor.fetchone()
-        
-        if vrow:
-            voertuig_id = vrow.VoertuigID
-        else:
-            # Create placeholder vehicle
-            cursor.execute("""
-                INSERT INTO Werkplaats_Voertuigen (Kenteken, KlantID)
-                OUTPUT INSERTED.VoertuigID
-                VALUES (?, ?)
-            """, clean_kenteken, klant_id)
-            voertuig_id = cursor.fetchone()[0]
-            conn.commit()
-
-        # Step 3: Create werkorder
-        cursor.execute("""
-            INSERT INTO Werkplaats_Werkorders (VoertuigID, KlantID, Status, Omschrijving)
-            OUTPUT INSERTED.WerkorderID
-            VALUES (?, ?, 'Gepland', ?)
-        """, voertuig_id, klant_id, f"{description} (Afspraak: {date_time}, Klant: {customer_name})")
-
-        werkorder_id = cursor.fetchone()[0]
-        conn.commit()
-
-        return f"Afspraak bevestigd voor {customer_name} op {date_time}. Werkorder #{werkorder_id} aangemaakt voor kenteken {kenteken}. We bellen u op {phone_number} ter bevestiging."
-
-    except Exception as e:
-        return f"Fout bij het maken van de afspraak: {e}"
-    finally:
-        conn.close()
 
 # --- RDW (Dutch Vehicle Authority) Tools ---
 
-# RDW Open Data endpoints (FREE, no API key required)
 RDW_VEHICLE_URL = "https://opendata.rdw.nl/resource/m9d7-ebf2.json"
 RDW_APK_URL = "https://opendata.rdw.nl/resource/sgfe-77wx.json"
 
@@ -282,7 +64,6 @@ def lookup_vehicle_rdw(kenteken: str) -> str:
     clean_kenteken = _normalize_kenteken(kenteken)
 
     try:
-        # Fetch vehicle basic info
         response = requests.get(
             RDW_VEHICLE_URL,
             params={"kenteken": clean_kenteken},
@@ -296,7 +77,6 @@ def lookup_vehicle_rdw(kenteken: str) -> str:
 
         vehicle = data[0]
 
-        # Extract key fields
         merk = vehicle.get("merk", "Onbekend")
         model = vehicle.get("handelsbenaming", "Onbekend")
         eerste_toelating = _format_rdw_date(vehicle.get("datum_eerste_toelating", ""))
@@ -305,7 +85,6 @@ def lookup_vehicle_rdw(kenteken: str) -> str:
         apk_formatted = _format_rdw_date(apk_vervaldatum)
         days_left = _days_until(apk_vervaldatum)
 
-        # Build response
         result = f"Voertuig gevonden: {merk} {model}"
         if eerste_toelating:
             result += f" (eerste toelating: {eerste_toelating})"
@@ -347,7 +126,6 @@ def check_apk_status(kenteken: str) -> str:
     clean_kenteken = _normalize_kenteken(kenteken)
 
     try:
-        # Fetch from vehicle endpoint (contains APK info)
         response = requests.get(
             RDW_VEHICLE_URL,
             params={"kenteken": clean_kenteken},
@@ -365,7 +143,6 @@ def check_apk_status(kenteken: str) -> str:
         apk_vervaldatum = vehicle.get("vervaldatum_apk", "")
 
         if not apk_vervaldatum:
-            # Check if vehicle is APK-exempt (new vehicles, certain categories)
             eerste_toelating = vehicle.get("datum_eerste_toelating", "")
             if eerste_toelating:
                 try:
@@ -384,21 +161,21 @@ def check_apk_status(kenteken: str) -> str:
             return f"APK-vervaldatum voor {merk} {model}: {apk_formatted}."
 
         if days_left < 0:
-            return (f"⚠️ WAARSCHUWING: De APK van uw {merk} {model} is VERLOPEN "
+            return (f"WAARSCHUWING: De APK van uw {merk} {model} is VERLOPEN "
                    f"op {apk_formatted} ({abs(days_left)} dagen geleden). "
                    f"U mag niet meer rijden op de openbare weg! "
                    f"Zal ik direct een APK-afspraak inplannen?")
         elif days_left <= 14:
-            return (f"🔴 DRINGEND: Uw APK verloopt over {days_left} dagen ({apk_formatted}). "
+            return (f"DRINGEND: Uw APK verloopt over {days_left} dagen ({apk_formatted}). "
                    f"Ik raad aan om direct een afspraak te maken. Zal ik dat doen?")
         elif days_left <= 30:
-            return (f"🟠 Let op: De APK van uw {merk} {model} verloopt over {days_left} dagen "
+            return (f"Let op: De APK van uw {merk} {model} verloopt over {days_left} dagen "
                    f"({apk_formatted}). Dit is een goed moment om een afspraak te maken.")
         elif days_left <= 60:
-            return (f"🟡 Ter info: De APK van uw {merk} {model} verloopt op {apk_formatted} "
+            return (f"Ter info: De APK van uw {merk} {model} verloopt op {apk_formatted} "
                    f"(over {days_left} dagen). Wilt u alvast inplannen?")
         else:
-            return (f"✅ De APK van uw {merk} {model} is geldig tot {apk_formatted} "
+            return (f"De APK van uw {merk} {model} is geldig tot {apk_formatted} "
                    f"(nog {days_left} dagen). Geen actie nodig.")
 
     except requests.exceptions.Timeout:
@@ -421,7 +198,6 @@ def get_vehicle_recalls(kenteken: str) -> str:
     clean_kenteken = _normalize_kenteken(kenteken)
 
     try:
-        # First get vehicle info to know make/model
         vehicle_response = requests.get(
             RDW_VEHICLE_URL,
             params={"kenteken": clean_kenteken},
@@ -437,8 +213,6 @@ def get_vehicle_recalls(kenteken: str) -> str:
         merk = vehicle.get("merk", "Onbekend")
         model = vehicle.get("handelsbenaming", "")
 
-        # Check RDW recall endpoint
-        # Note: RDW recalls are at vehicle level via different endpoint
         recall_url = "https://opendata.rdw.nl/resource/j9yg-8gap.json"
         recall_response = requests.get(
             recall_url,
@@ -452,16 +226,14 @@ def get_vehicle_recalls(kenteken: str) -> str:
             return (f"Geen openstaande terugroepacties gevonden voor uw {merk} {model}. "
                    f"Uw voertuig is up-to-date met alle veiligheidsmaatregelen.")
 
-        # Format recalls
         active_recalls = []
         for recall in recall_data:
             beschrijving = recall.get("code_defect_omschrijving", "Onbekend defect")
-            status = recall.get("status", "")
             active_recalls.append(f"• {beschrijving}")
 
         if active_recalls:
-            result = (f"⚠️ Er zijn {len(active_recalls)} terugroepactie(s) voor uw {merk} {model}:\n"
-                     + "\n".join(active_recalls[:3]))  # Limit to 3
+            result = (f"Er zijn {len(active_recalls)} terugroepactie(s) voor uw {merk} {model}:\n"
+                     + "\n".join(active_recalls[:3]))
             if len(active_recalls) > 3:
                 result += f"\n... en {len(active_recalls) - 3} meer."
             result += "\nDeze kunnen mogelijk kosteloos worden verholpen. Zal ik een afspraak maken?"
@@ -502,60 +274,64 @@ def web_search(query: str) -> str:
     except Exception as e:
         return f"Fout bij zoeken: {e}"
 
-# --- Diensten (Services) Tools ---
 
-class ServicePriceInput(BaseModel):
-    service_type: str = Field(description="Type of service (e.g., 'APK', 'grote beurt', 'remblokken')")
-    vehicle_info: Optional[str] = Field(default=None, description="Vehicle make/model for specific pricing")
+# --- Appointment Request Tool ---
 
-@tool("get_service_price", args_schema=ServicePriceInput)
-def get_service_price(service_type: str, vehicle_info: Optional[str] = None) -> str:
+class AppointmentRequestInput(BaseModel):
+    date_time: str = Field(description="The requested date and time for the appointment (e.g., '2026-04-01 14:00').")
+    description: str = Field(description="Description of the work needed (e.g., 'APK keuring', 'Grote beurt', 'Proefrit').")
+    customer_name: str = Field(description="Full name of the customer.")
+    phone_number: str = Field(description="Customer phone number for confirmation.")
+    customer_email: str = Field(description="Customer email address for sending confirmation.")
+    kenteken: str = Field(default="", description="Vehicle license plate (kenteken). Optional for test drives.")
+
+@tool("request_appointment", args_schema=AppointmentRequestInput)
+def request_appointment(
+    date_time: str,
+    description: str,
+    customer_name: str,
+    phone_number: str,
+    customer_email: str,
+    kenteken: str = ""
+) -> str:
     """
-    WinCar Module: DIENSTEN
-    Look up service pricing. Use this when customers ask about costs for maintenance, repairs, or services.
+    Request an appointment at the garage. This creates a PROPOSAL that the garage owner
+    will review and accept. The customer will receive a confirmation email once accepted.
+    Minimum date: 3 weeks from today. Collects name, phone, email, kenteken, date, and description.
     """
-    conn = get_wincar_connection()
-    cursor = conn.cursor()
     try:
-        # Search services
-        cursor.execute("""
-            SELECT Naam, StandaardPrijs, ArbeidUren, Omschrijving
-            FROM Diensten_Services
-            WHERE Naam LIKE ? OR ServiceCode LIKE ? OR Omschrijving LIKE ?
-        """, f"%{service_type}%", f"%{service_type}%", f"%{service_type}%")
+        requested = datetime.strptime(date_time, "%Y-%m-%d %H:%M")
+    except ValueError:
+        try:
+            requested = datetime.strptime(date_time, "%Y-%m-%d")
+        except ValueError:
+            return "Ongeldige datum. Gebruik het formaat YYYY-MM-DD HH:MM."
 
-        services = cursor.fetchall()
+    minimum_date = (datetime.now() + timedelta(weeks=3)).date()
+    if requested.date() < minimum_date:
+        return (f"De vroegst mogelijke datum is {minimum_date.strftime('%d-%m-%Y')}. "
+                f"Kies een datum minimaal 3 weken in de toekomst.")
 
-        if not services:
-            return f"Geen prijsinformatie gevonden voor '{service_type}'. Neem contact op voor een offerte."
+    details = (
+        f"Afspraakverzoek ontvangen:\n"
+        f"• Klant: {customer_name}\n"
+        f"• Telefoon: {phone_number}\n"
+        f"• E-mail: {customer_email}\n"
+        f"• Datum/tijd: {date_time}\n"
+        f"• Omschrijving: {description}\n"
+    )
+    if kenteken:
+        details += f"• Kenteken: {kenteken}\n"
 
-        # Get labor rate
-        cursor.execute("SELECT UurTarief FROM Diensten_Tarieven WHERE Naam = 'Standaard'")
-        rate_row = cursor.fetchone()
-        labor_rate = rate_row.UurTarief if rate_row else 75.00
+    details += (
+        f"\nHet verzoek is geregistreerd. "
+        f"De garage eigenaar beoordeelt dit en u ontvangt een bevestigingsmail zodra de afspraak is bevestigd."
+    )
+    return details
 
-        results = []
-        for s in services:
-            total = s.StandaardPrijs
-            if s.ArbeidUren and s.ArbeidUren > 0:
-                labor_cost = float(s.ArbeidUren) * float(labor_rate)
-                # Note: StandaardPrijs in the seed data for BEURT-K is 89.00
-                # If we want it to be "inclusive", we should clarify if StandaardPrijs is just parts or total.
-                # In the plan it says "total = s.StandaardPrijs", and then it lists labor separately if needed?
-                # Actually, in most garages, the price is either inclusive or parts+labor.
-                # Let's follow the plan's logic but make it clearer.
-                results.append(f"• {s.Naam}: €{total:.2f} (incl. {s.ArbeidUren}u arbeid)")
-            else:
-                results.append(f"• {s.Naam}: €{total:.2f}")
-
-        return "Prijzen:\n" + "\n".join(results) + "\n\n(Prijzen zijn indicatief, inclusief BTW)"
-
-    finally:
-        conn.close()
 
 # --- Occasions (Car Sales) Tools ---
 
-# Module-level cache for car listings
 _occasions_cache: Dict[str, Any] = {"data": None, "timestamp": 0}
 _CACHE_TTL = 600  # 10 minutes
 
@@ -598,14 +374,12 @@ def _fetch_occasions() -> List[Dict[str, Any]]:
         return []
 
     try:
-        # Fetch first page to get total count
         resp = requests.get("https://www.wiefferink.com/occasions/", timeout=8)
         resp.raise_for_status()
         html = resp.text
 
         cars = _parse_cars_from_html(html)
 
-        # Check for pagination: <meta name="total-count" content="59" />
         total_match = re.search(r'<meta\s+name="total-count"\s+content="(\d+)"', html)
         result_match = re.search(r'<meta\s+name="result-count"\s+content="(\d+)"', html)
 
@@ -614,7 +388,6 @@ def _fetch_occasions() -> List[Dict[str, Any]]:
             per_page = int(result_match.group(1))
 
             if total > per_page:
-                # Fetch remaining pages
                 pages_needed = (total + per_page - 1) // per_page
                 for page_num in range(2, pages_needed + 1):
                     try:
@@ -625,14 +398,13 @@ def _fetch_occasions() -> List[Dict[str, Any]]:
                         page_resp.raise_for_status()
                         cars.extend(_parse_cars_from_html(page_resp.text))
                     except Exception:
-                        break  # Stop on error, return what we have
+                        break
 
         _occasions_cache["data"] = cars
         _occasions_cache["timestamp"] = now
         return cars
 
-    except Exception as e:
-        # Return cached data if available, even if stale
+    except Exception:
         if _occasions_cache["data"] is not None:
             return _occasions_cache["data"]
         return []
@@ -675,12 +447,10 @@ def search_available_cars(
 
     results = []
     for car in cars:
-        # Extract fields with fallbacks for different JSON-LD schemas
         car_name = _extract_car_field(car, ["name", "headline", "description"], "Onbekend")
         car_brand = _extract_car_field(car, ["brand", "manufacturer"], "")
         car_model = _extract_car_field(car, ["model", "vehicleModelDate"], "")
 
-        # Price extraction
         price_val = None
         offers = car.get("offers", car.get("offer", {}))
         if isinstance(offers, dict):
@@ -708,11 +478,9 @@ def search_available_cars(
         car_fuel = _extract_car_field(car, ["fuelType", "fuel"], "").lower()
         car_body = _extract_car_field(car, ["bodyType", "vehicleBodyType"], "").lower()
         car_year = _extract_car_field(car, ["vehicleModelDate", "modelDate", "dateVehicleFirstRegistered"], "")
-        # Extract year portion if it's a date like "2010-06"
         if car_year and len(car_year) >= 4:
             car_year = car_year[:4]
 
-        # Mileage can be a QuantitativeValue object or a string
         car_km_raw = car.get("mileageFromOdometer", "")
         if isinstance(car_km_raw, dict):
             car_km = str(car_km_raw.get("value", ""))
@@ -724,7 +492,6 @@ def search_available_cars(
 
         car_url = _extract_car_field(car, ["url", "@id"], "https://www.wiefferink.com/occasions/")
 
-        # Apply filters
         if budget:
             try:
                 max_price = float(re.sub(r'[^\d.]', '', budget))
@@ -742,7 +509,6 @@ def search_available_cars(
         if body_type and car_body and body_type.lower() not in car_body:
             continue
 
-        # Format result
         display_name = car_name if car_name != "Onbekend" else f"{car_brand} {car_model}".strip()
         line = f"• {display_name}"
         if car_year:
@@ -774,4 +540,4 @@ def search_available_cars(
                 f"of vraag naar andere opties.")
 
     header = f"Beschikbare occasions ({len(results)} gevonden):\n\n"
-    return header + "\n\n".join(results[:10])  # Limit to 10 for voice readability
+    return header + "\n\n".join(results[:10])

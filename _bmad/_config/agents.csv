@@ -1,9 +1,0 @@
-name,displayName,title,icon,module,path
-bmad-master,BMAD Master,Workflow Orchestrator,🧙,core,_bmad/core/agents/bmad-master.md
-product-manager,Jan,Product Manager,📋,garage,_bmad/garage/agents/product-manager.md
-architect,Willem,System Architect,🏗️,garage,_bmad/garage/agents/architect.md
-developer,Sophie,Senior Developer,💻,garage,_bmad/garage/agents/developer.md
-voice-specialist,Harry,Voice & Telephony Specialist,🎙️,garage,_bmad/garage/agents/voice-specialist.md
-database-expert,Pieter,Database & WinCar Expert,🗄️,garage,_bmad/garage/agents/database-expert.md
-quick-dev,Barry,Quick Flow Solo Developer,🚀,garage,_bmad/garage/agents/quick-dev.md
-testing-agent,Tessa,QA & Testing Specialist,🧪,garage,_bmad/garage/agents/testing-agent.md
