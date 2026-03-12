@@ -2,14 +2,15 @@
 
 ## Overview
 
-Voice-enabled AI receptionist (Harry) for Dutch automotive garages. Real-time phone + web conversations via Gemini Live API with <800ms latency.
+Voice-enabled AI receptionist (Harry) for Dutch automotive garages. Real-time phone + web conversations via Gemini Live API (STT + reasoning) + ElevenLabs (TTS) with background office ambience.
 
 ## Tech Stack
 
 | Layer | Technology |
 |---|---|
 | Backend | Python 3.12, FastAPI, LangGraph, LangChain |
-| AI | Google Gemini 2.5 Flash Live API |
+| AI | Google Gemini 2.5 Flash Live API (STT + reasoning) |
+| Voice | ElevenLabs WebSocket Streaming TTS (eleven_multilingual_v2) |
 | Calendar | Google Calendar API (service account) |
 | Email | Resend |
 | Vehicle Data | RDW Open Data API |
@@ -23,8 +24,10 @@ Voice-enabled AI receptionist (Harry) for Dutch automotive garages. Real-time ph
 app/graph.py          # LangGraph state machine + Harry system prompt
 app/tools.py          # 6 tools (RDW, appointments, cars, web search)
 bridge/api.py         # FastAPI REST endpoints + CORS
-bridge/telephony.py   # WebSocket handlers (Twilio + Web) + Gemini Live + takeover
+bridge/telephony.py   # WebSocket handlers (Twilio + Web) + Gemini Live + ElevenLabs TTS + takeover
 bridge/audio.py       # Audio codec conversion (µ-law ↔ PCM)
+bridge/elevenlabs.py  # ElevenLabs WebSocket streaming TTS client
+bridge/noise.py       # Background office noise generator + mixer
 bridge/calendar.py    # Google Calendar integration
 bridge/email.py       # Resend email notifications
 bridge/state.py       # Persistent custom instructions
@@ -74,6 +77,13 @@ async def new_endpoint(param: str):
 
 ## Changelog
 
+### 2026-03-11
+- **ElevenLabs TTS**: Replaced Gemini's built-in voice ("Orus") with ElevenLabs WebSocket streaming TTS. Gemini now runs in TEXT output mode (STT + reasoning only). Voice synthesis handled by ElevenLabs `eleven_multilingual_v2` model.
+- **Background office noise**: Added synthetic office ambience (pink noise + low-pass filter) mixed into all outgoing audio at 12% volume. Makes AI calls feel like calling a real office (similar to Retell AI).
+- **New audio pipeline**: Twilio audio → Gemini (STT) → text → ElevenLabs (TTS) → mix noise → Twilio. Both Twilio (16kHz PCM → µ-law) and Web (24kHz PCM) paths supported.
+- **New files**: `bridge/elevenlabs.py` (TTS client), `bridge/noise.py` (noise generator/mixer).
+- **Env vars**: `ELEVENLABS_API_KEY`, `ELEVENLABS_VOICE_ID`, `ELEVENLABS_MODEL_ID`, `OFFICE_NOISE_VOLUME`.
+
 ### 2026-03-04
 - **Dashboard live monitoring**: Dashboard auto-connects in monitor mode on page load. All Twilio call data (transcripts, tool calls, vehicle data, sentiment) streams to the dashboard in real time.
 - **Takeover from dashboard**: Owner can take over a live Twilio call from the dashboard (Take Over / Return to Harry).
@@ -83,7 +93,8 @@ async def new_endpoint(param: str):
 
 ## Constraints
 
-1. **Latency**: 800ms total (200ms network + 400ms Gemini + 200ms code)
-2. **Audio**: Twilio 8kHz µ-law · Gemini input 16kHz PCM · Gemini output 24kHz PCM
-3. **Language**: Code/docs English · Customer-facing responses Dutch
-4. **Appointments**: Minimum 3 weeks out · Creates proposals (not confirmed) · Owner accepts from dashboard
+1. **Latency**: ~800ms total (200ms network + 200ms Gemini text + 300ms ElevenLabs first byte + 100ms code)
+2. **Audio pipeline**: Twilio 8kHz µ-law → 16kHz PCM → Gemini (TEXT mode) → ElevenLabs TTS → mix noise → µ-law/PCM
+3. **Voice**: ElevenLabs (non-negotiable) · Background office noise at 12% volume
+4. **Language**: Code/docs English · Customer-facing responses Dutch
+5. **Appointments**: Minimum 3 weeks out · Creates proposals (not confirmed) · Owner accepts from dashboard

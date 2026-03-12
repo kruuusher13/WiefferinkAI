@@ -2,21 +2,27 @@
 TorxFlow Telephony Bridge
 =========================
 
-WebSocket bridge between clients (Twilio/Web) and Google Gemini Live API.
+WebSocket bridge between clients (Twilio/Web) and AI pipeline.
 
-AUDIO SAMPLE RATE REFERENCE:
+AUDIO PIPELINE (Deepgram STT + Gemini LLM + ElevenLabs TTS):
 ┌─────────────────────────┬──────────────┬───────────────┐
 │ Stream Direction        │ Format       │ Sample Rate   │
 ├─────────────────────────┼──────────────┼───────────────┤
 │ Twilio → Bridge         │ Mu-law       │ 8,000 Hz      │
-│ Bridge → Gemini         │ PCM Int16    │ 16,000 Hz     │
-│ Gemini → Bridge         │ PCM Int16    │ 24,000 Hz     │
+│ Bridge → Deepgram       │ PCM Int16    │ 16,000 Hz     │
+│ Deepgram → Bridge       │ JSON text    │ N/A           │
+│ Bridge → Gemini LLM     │ Text         │ N/A           │
+│ Gemini LLM → Bridge     │ Text         │ N/A           │
+│ Bridge → ElevenLabs     │ Text         │ N/A           │
+│ ElevenLabs → Bridge     │ PCM Int16    │ 24,000 Hz     │
+│ Bridge (noise mix)      │ PCM Int16    │ 24,000 Hz     │
 │ Bridge → Twilio         │ Mu-law       │ 8,000 Hz      │
 │ Web Mic → Bridge        │ PCM Int16    │ 16,000 Hz     │
 │ Bridge → Web Speaker    │ PCM Int16    │ 24,000 Hz     │
 └─────────────────────────┴──────────────┴───────────────┘
 
-CRITICAL: Gemini accepts 16kHz input but outputs 24kHz audio!
+Split pipeline: Deepgram (STT) → Gemini 2.5 Flash (text LLM) → ElevenLabs (TTS).
+Background office noise mixed into all outgoing audio.
 """
 
 import os
@@ -24,7 +30,6 @@ import json
 import base64
 import asyncio
 import logging
-import websockets
 import re
 import difflib
 from datetime import datetime
@@ -36,6 +41,10 @@ from fastapi.staticfiles import StaticFiles
 from starlette.websockets import WebSocketDisconnect
 from dotenv import load_dotenv
 from bridge.audio import AudioResampler
+from bridge.deepgram_stt import DeepgramSTT
+from bridge.elevenlabs import ElevenLabsStreamer
+from bridge.gemini_llm import GeminiLLM
+from bridge.noise import OfficeNoiseMixer
 from bridge.state import get_custom_instructions
 
 
@@ -60,7 +69,6 @@ load_dotenv()
 
 router = APIRouter()
 
-GOOGLE_API_KEY = os.getenv("GOOGLE_API_KEY")
 TWILIO_ACCOUNT_SID = os.getenv("TWILIO_ACCOUNT_SID")
 
 # Tool Imports
@@ -73,11 +81,6 @@ from app.tools import (
     search_available_cars,
 )
 
-# Gemini Live API Configuration
-GEMINI_HOST = "generativelanguage.googleapis.com"
-GEMINI_URI = os.getenv("GEMINI_URL_OVERRIDE") or f"wss://{GEMINI_HOST}/ws/google.ai.generativelanguage.v1beta.GenerativeService.BidiGenerateContent?key={GOOGLE_API_KEY}"
-GEMINI_MODEL = "models/gemini-2.5-flash-native-audio-latest"
-
 # --- System Instruction ---
 SYSTEM_INSTRUCTION = """
 You are Harry, the friendly AI receptionist for Garage Wiefferink. Be concise (max 2 sentences). Be warm and professional.
@@ -89,6 +92,7 @@ LANGUAGE RULES (STRICT):
 - The ONLY exception: the initial greeting is always in Dutch.
 
 RULES:
+- Before calling a tool, say a brief filler phrase like "Even kijken..." or "Momentje..." so the caller knows you're working on it. Keep it natural and short.
 - NEVER say you can't help or that something is unavailable. If you cannot find what the customer needs:
   - Dutch: "Ik kan dat zo snel even niet voor u vinden. Belt u ons gerust terug op 0546-577766, dan helpen mijn collega's u graag verder!"
   - English: "I can't find that right now. Please call us back at 0546-577766 and my colleagues will be happy to help!"
@@ -235,7 +239,7 @@ logging.basicConfig(level=logging.INFO)
 # ============================================
 
 _active_sessions: dict[str, dict] = {}
-# Key: "twilio" or "web", Value: {"twilio_ws": ws, "gemini_ws": ws, "takeover": bool}
+# Key: "twilio" or "web", Value: {"twilio_ws": ws, "llm": GeminiLLM, "takeover": bool}
 
 # ============================================
 # MONITOR CLIENTS (dashboard broadcast)
@@ -342,12 +346,65 @@ async def _execute_tool(f_name: str, f_args: dict) -> str:
 
 
 # ============================================
+# SHARED: Tool call handler for LLM pipeline
+# ============================================
+
+async def _handle_tool_call(f_name: str, f_args: dict, session_tools_used: list, session_transcript: list,
+                             session_sentiments: list, broadcast_fn, emit_vehicle_data=None) -> str:
+    """Handle a tool call from GeminiLLM. Returns result string."""
+    logger.info(f"Executing Tool: {f_name} with args: {f_args}")
+    session_tools_used.append({"name": f_name, "args": f_args, "timestamp": datetime.now().isoformat()})
+    session_transcript.append({"role": "system", "text": f"Tool: {f_name}({json.dumps(f_args)})", "timestamp": datetime.now().isoformat(), "type": "tool_call"})
+
+    if f_name != "report_sentiment":
+        await broadcast_fn({"type": "tool_call", "name": f_name, "args": f_args})
+
+    try:
+        if f_name == "report_sentiment":
+            sentiment = f_args.get("sentiment", "neutral")
+            session_sentiments.append(sentiment)
+            result = "ok"
+        elif f_name == "request_appointment":
+            result = await _execute_tool(f_name, f_args)
+            try:
+                from bridge.email import send_owner_notification
+                send_owner_notification(
+                    customer_name=f_args.get("customer_name", ""),
+                    phone_number=f_args.get("phone_number", ""),
+                    customer_email=f_args.get("customer_email", ""),
+                    date_time=f_args.get("date_time", ""),
+                    description=f_args.get("description", ""),
+                    kenteken=f_args.get("kenteken", ""),
+                )
+            except Exception as email_err:
+                logger.error(f"Owner notification failed: {email_err}")
+        else:
+            result = await _execute_tool(f_name, f_args)
+    except Exception as e:
+        result = f"Tool Execution Error: {e}"
+
+    session_transcript.append({"role": "system", "text": f"Result: {str(result)[:200]}", "timestamp": datetime.now().isoformat(), "type": "tool_result"})
+
+    if f_name != "report_sentiment":
+        await broadcast_fn({"type": "tool_result", "name": f_name, "result": str(result)[:500]})
+
+    # Broadcast vehicle data for RDW lookups
+    if f_name == "lookup_vehicle_rdw" and "Voertuig gevonden" in str(result) and emit_vehicle_data:
+        try:
+            await emit_vehicle_data(f_args.get("kenteken", ""))
+        except Exception as ve:
+            logger.error(f"vehicle_data broadcast error: {ve}")
+
+    return str(result)
+
+
+# ============================================
 # TWILIO WEBSOCKET HANDLER
 # ============================================
 
 @router.websocket("/ws/twilio")
 async def websocket_endpoint(websocket: WebSocket):
-    """WebSocket endpoint for Twilio Media Streams."""
+    """WebSocket endpoint for Twilio Media Streams — Deepgram STT + Gemini LLM + ElevenLabs TTS."""
     await websocket.accept()
     logger.info("Twilio WebSocket connection accepted")
 
@@ -360,7 +417,6 @@ async def websocket_endpoint(websocket: WebSocket):
     session_start = datetime.now()
     recent_responses: list[str] = []
     loop_break_attempts = 0
-    current_turn_text = ""
 
     # --- Wait for Twilio "start" event to get stream_sid ---
     try:
@@ -378,292 +434,255 @@ async def websocket_endpoint(websocket: WebSocket):
     # Register session
     _active_sessions["twilio"] = {
         "twilio_ws": websocket,
-        "gemini_ws": None,
         "takeover": False,
         "stream_sid": stream_sid,
+        "llm": None,
     }
 
-    # Harry answers immediately — broadcast to monitors
+    # Initialize pipeline components
+    stt = DeepgramSTT(language="multi", sample_rate=16000)
+    llm = GeminiLLM(system_instruction=_build_system_instruction(), tools_schema=TOOLS_SCHEMA)
+    tts = ElevenLabsStreamer(output_format="pcm_24000")
+    await tts.connect()  # Pre-connect to eliminate first-response delay
+    noise_mixer = OfficeNoiseMixer(sample_rate=24000)
+    is_speaking = False
+    generating_task: asyncio.Task | None = None
+
+    _active_sessions["twilio"]["llm"] = llm
+
     await _broadcast({"type": "call_state", "state": "harry_talking"})
     logger.info("[CALL] Harry answering Twilio call immediately")
 
+    async def emit_vehicle_data(kenteken: str):
+        clean_kt = re.sub(r'[^A-Z0-9]', '', kenteken.upper())
+        from bridge.api import rdw_lookup
+        rdw_data = await rdw_lookup(clean_kt)
+        if isinstance(rdw_data, dict) and rdw_data.get("status") == "success":
+            await _broadcast({"type": "vehicle_data", "data": rdw_data["data"]})
+
     try:
-        async with websockets.connect(GEMINI_URI) as gemini_ws:
-            logger.info("Connected to Gemini Live API")
+        await stt.connect()
+        logger.info("Deepgram STT connected for Twilio call")
 
-            _active_sessions["twilio"]["gemini_ws"] = gemini_ws
+        # Task 1: Relay ElevenLabs audio → noise mix → Twilio
+        async def relay_tts_to_twilio():
+            try:
+                while True:
+                    try:
+                        audio_chunk = await asyncio.wait_for(tts.get_audio(), timeout=0.1)
+                    except asyncio.TimeoutError:
+                        if _active_sessions.get("twilio", {}).get("takeover"):
+                            continue
+                        noise_chunk = noise_mixer.get_ambient_chunk(100)
+                        mulaw_chunk = resampler.pcm_24k_to_mulaw(noise_chunk)
+                        if stream_sid:
+                            await websocket.send_text(json.dumps({
+                                "event": "media", "streamSid": stream_sid,
+                                "media": {"payload": base64.b64encode(mulaw_chunk).decode("utf-8")}
+                            }))
+                        continue
 
-            setup_config = {
-                "setup": {
-                    "model": GEMINI_MODEL,
-                    "systemInstruction": {
-                         "parts": [{"text": _build_system_instruction()}]
-                    },
-                    "tools": TOOLS_SCHEMA,
-                    "generation_config": {
-                        "response_modalities": ["AUDIO"],
-                        "speech_config": {
-                            "voice_config": {
-                                "prebuilt_voice_config": {
-                                    "voice_name": "Orus"
-                                }
-                            }
-                        }
-                    },
-                    "inputAudioTranscription": {},
-                    "outputAudioTranscription": {}
-                }
-            }
-            await gemini_ws.send(json.dumps(setup_config))
-            logger.info("Sent setup config to Gemini")
+                    if audio_chunk is None:
+                        break
 
-            # Trigger Harry's greeting immediately
-            initial_msg = {
-                "client_content": {
-                    "turns": [{
-                        "role": "user",
-                        "parts": [{"text": "START: Een nieuwe klant belt. Begroet de klant nu met je standaard begroeting."}]
-                    }],
-                    "turn_complete": True
-                }
-            }
-            await gemini_ws.send(json.dumps(initial_msg))
+                    if _active_sessions.get("twilio", {}).get("takeover"):
+                        continue
+
+                    mixed = noise_mixer.mix_into_pcm(audio_chunk)
+                    mulaw_chunk = resampler.pcm_24k_to_mulaw(mixed)
+                    if stream_sid:
+                        await websocket.send_text(json.dumps({
+                            "event": "media", "streamSid": stream_sid,
+                            "media": {"payload": base64.b64encode(mulaw_chunk).decode("utf-8")}
+                        }))
+            except asyncio.CancelledError:
+                pass
+            except Exception as e:
+                logger.error(f"Error in relay_tts_to_twilio: {e}")
+
+        tts_relay_task = asyncio.create_task(relay_tts_to_twilio())
+
+        # Task 2: Receive Twilio audio → forward to Deepgram
+        async def receive_from_twilio():
+            nonlocal stream_sid
+            try:
+                while True:
+                    message = await websocket.receive_text()
+                    data = json.loads(message)
+                    event = data.get("event")
+
+                    if event == "media":
+                        if _active_sessions.get("twilio", {}).get("takeover"):
+                            continue
+                        payload = data["media"]["payload"]
+                        chunk = base64.b64decode(payload)
+                        pcm_data = resampler.mulaw_to_pcm(chunk)
+                        await stt.send_audio(pcm_data)
+
+                    elif event == "stop":
+                        logger.info("Twilio stream stopped")
+                        break
+            except WebSocketDisconnect:
+                logger.info("Twilio client disconnected")
+            except Exception as e:
+                logger.error(f"Error in receive_from_twilio: {e}")
+
+        # Task 3: Process Deepgram STT events → Gemini LLM → ElevenLabs TTS
+        async def process_stt_pipeline():
+            nonlocal is_speaking, generating_task, loop_break_attempts
+            accumulated_text = ""
+
+            # Trigger greeting immediately
+            twilio_gen_start_time = 0.0
+
+            async def generate_turn(user_text: str):
+                nonlocal is_speaking, loop_break_attempts, twilio_gen_start_time
+                is_speaking = True
+                twilio_gen_start_time = asyncio.get_event_loop().time()
+                await _broadcast({"type": "call_state", "state": "harry_talking"})
+
+                full_response = ""
+
+                async def on_text_chunk(chunk: str):
+                    nonlocal full_response
+                    full_response += chunk
+                    # Clean for dashboard display
+                    display = chunk
+                    match = SENTIMENT_PATTERN.search(display)
+                    if match:
+                        await _broadcast({"type": "sentiment", "emoji": match.group(1)})
+                        display = SENTIMENT_PATTERN.sub("", display)
+                    display = THOUGHT_PATTERN.sub("", display)
+                    display = BOLD_HEADER_PATTERN.sub("", display)
+                    display = CONTROL_CHAR_PATTERN.sub("", display)
+                    display = display.strip()
+                    if display:
+                        await _broadcast({"type": "thought", "text": display})
+                        # Feed cleaned text to ElevenLabs TTS
+                        await tts.send_text(display)
+
+                async def on_tool_call(name: str, args: dict) -> str:
+                    await _broadcast({"type": "call_state", "state": "processing"})
+                    return await _handle_tool_call(
+                        name, args, session_tools_used, session_transcript,
+                        session_sentiments, _broadcast, emit_vehicle_data
+                    )
+
+                try:
+                    await llm.generate_response(user_text, on_text_chunk, on_tool_call)
+                    await tts.flush()
+                except Exception as e:
+                    logger.error(f"LLM generate error: {e}")
+
+                # Transcript
+                clean_response = SENTIMENT_PATTERN.sub("", full_response)
+                clean_response = THOUGHT_PATTERN.sub("", clean_response)
+                clean_response = BOLD_HEADER_PATTERN.sub("", clean_response)
+                clean_response = CONTROL_CHAR_PATTERN.sub("", clean_response).strip()
+                if clean_response:
+                    session_transcript.append({"role": "assistant", "text": clean_response, "timestamp": datetime.now().isoformat(), "type": "speech"})
+                    await _broadcast({"type": "transcript", "role": "assistant", "text": clean_response})
+
+                    recent_responses.append(clean_response)
+                    if len(recent_responses) > 5:
+                        recent_responses.pop(0)
+                    if _is_loop_detected(recent_responses):
+                        loop_break_attempts += 1
+                        if loop_break_attempts >= 2:
+                            await llm.generate_response(
+                                "Excuus, ik verstond u niet goed. Belt u ons gerust terug op 0546-577766. Tot ziens!",
+                                on_text_chunk, on_tool_call
+                            )
+                            await tts.flush()
+
+                llm.trim_history()
+                is_speaking = False
+                await _broadcast({"type": "call_state", "state": "idle"})
+
+            # Trigger greeting
+            generating_task = asyncio.create_task(generate_turn(
+                "START: Een nieuwe klant belt. Begroet de klant nu met je standaard begroeting."
+            ))
             logger.info("Triggered initial AI greeting for Twilio call")
 
-            async def receive_from_twilio():
-                nonlocal stream_sid
-                try:
-                    while True:
-                        message = await websocket.receive_text()
-                        data = json.loads(message)
-                        event = data.get("event")
+            # Helper: cancel any in-progress generation
+            async def cancel_twilio_generation():
+                nonlocal is_speaking, generating_task
+                if generating_task and not generating_task.done():
+                    llm.cancel()
+                    await tts.cancel()
+                    generating_task.cancel()
+                    try:
+                        await generating_task
+                    except asyncio.CancelledError:
+                        pass
+                is_speaking = False
 
-                        if event == "media":
-                            # Don't send caller audio to Gemini during takeover
-                            if _active_sessions.get("twilio", {}).get("takeover"):
-                                continue
+            try:
+                while True:
+                    event = await stt.event_queue.get()
+                    if event is None:
+                        break
 
-                            payload = data["media"]["payload"]
-                            chunk = base64.b64decode(payload)
-                            pcm_data = resampler.mulaw_to_pcm(chunk)
+                    if event.type == "speech_started":
+                        elapsed = asyncio.get_event_loop().time() - twilio_gen_start_time
+                        if is_speaking and elapsed > 1.5:
+                            logger.info(f"[INTERRUPT] User speaking after {elapsed:.1f}s, cancelling")
+                            await cancel_twilio_generation()
+                            if stream_sid:
+                                await websocket.send_text(json.dumps({"event": "clear", "streamSid": stream_sid}))
 
-                            realtime_input = {
-                                "realtime_input": {
-                                    "media_chunks": [{
-                                        "mime_type": "audio/pcm",
-                                        "data": base64.b64encode(pcm_data).decode("utf-8")
-                                    }]
-                                }
-                            }
-                            await gemini_ws.send(json.dumps(realtime_input))
+                    elif event.type == "transcript_final":
+                        accumulated_text += " " + event.text
 
-                        elif event == "stop":
-                            logger.info("Twilio stream stopped")
-                            break
+                    elif event.type == "speech_final":
+                        accumulated_text += " " + event.text
+                        user_text = accumulated_text.strip()
+                        accumulated_text = ""
+                        if user_text:
+                            await cancel_twilio_generation()
+                            session_transcript.append({"role": "user", "text": user_text, "timestamp": datetime.now().isoformat(), "type": "speech"})
+                            await _broadcast({"type": "transcript", "role": "user", "text": user_text})
+                            generating_task = asyncio.create_task(generate_turn(user_text))
 
-                except WebSocketDisconnect:
-                    logger.info("Twilio client disconnected")
-                except Exception as e:
-                    logger.error(f"Error in receive_from_twilio: {e}")
+                    elif event.type == "utterance_end":
+                        user_text = accumulated_text.strip()
+                        accumulated_text = ""
+                        if user_text:
+                            await cancel_twilio_generation()
+                            session_transcript.append({"role": "user", "text": user_text, "timestamp": datetime.now().isoformat(), "type": "speech"})
+                            await _broadcast({"type": "transcript", "role": "user", "text": user_text})
+                            generating_task = asyncio.create_task(generate_turn(user_text))
+            except asyncio.CancelledError:
+                pass
+            except Exception as e:
+                logger.error(f"Error in process_stt_pipeline: {e}")
 
-            async def receive_from_gemini():
-                nonlocal stream_sid, current_turn_text, loop_break_attempts
-                pending_assistant_transcript = ""
-                pending_caller_transcript = ""
-                try:
-                    async for message in gemini_ws:
-                        response = json.loads(message)
+        task1 = asyncio.create_task(receive_from_twilio())
+        task2 = asyncio.create_task(process_stt_pipeline())
 
-                        if "toolCall" in response:
-                            await _broadcast({"type": "call_state", "state": "processing"})
-                            tool_calls = response["toolCall"]["functionCalls"]
-                            tool_responses = []
+        done, pending = await asyncio.wait(
+            [task1, task2],
+            return_when=asyncio.FIRST_COMPLETED
+        )
 
-                            for call in tool_calls:
-                                f_name = call["name"]
-                                f_args = call["args"]
-                                call_id = call["id"]
+        for task in pending:
+            task.cancel()
 
-                                logger.info(f"Executing Tool: {f_name} with args: {f_args}")
-                                session_tools_used.append({"name": f_name, "args": f_args, "timestamp": datetime.now().isoformat()})
-                                session_transcript.append({"role": "system", "text": f"Tool: {f_name}({json.dumps(f_args)})", "timestamp": datetime.now().isoformat(), "type": "tool_call"})
+        tts_relay_task.cancel()
 
-                                if f_name != "report_sentiment":
-                                    await _broadcast({"type": "tool_call", "name": f_name, "args": f_args})
-
-                                try:
-                                    if f_name == "report_sentiment":
-                                        sentiment = f_args.get("sentiment", "neutral")
-                                        logger.info(f"[SENTIMENT] Twilio call: {sentiment}")
-                                        session_sentiments.append(sentiment)
-                                        result = "ok"
-                                    elif f_name == "request_appointment":
-                                        result = await _execute_tool(f_name, f_args)
-                                        try:
-                                            from bridge.email import send_owner_notification
-                                            send_owner_notification(
-                                                customer_name=f_args.get("customer_name", ""),
-                                                phone_number=f_args.get("phone_number", ""),
-                                                customer_email=f_args.get("customer_email", ""),
-                                                date_time=f_args.get("date_time", ""),
-                                                description=f_args.get("description", ""),
-                                                kenteken=f_args.get("kenteken", ""),
-                                            )
-                                        except Exception as email_err:
-                                            logger.error(f"Owner notification failed: {email_err}")
-                                    else:
-                                        result = await _execute_tool(f_name, f_args)
-                                except Exception as e:
-                                    result = f"Tool Execution Error: {e}"
-
-                                session_transcript.append({"role": "system", "text": f"Result: {str(result)[:200]}", "timestamp": datetime.now().isoformat(), "type": "tool_result"})
-
-                                if f_name != "report_sentiment":
-                                    await _broadcast({"type": "tool_result", "name": f_name, "result": str(result)[:500]})
-
-                                # Broadcast vehicle data for RDW lookups
-                                if f_name == "lookup_vehicle_rdw" and "Voertuig gevonden" in str(result):
-                                    try:
-                                        kenteken_arg = f_args.get("kenteken", "")
-                                        clean_kt = re.sub(r'[^A-Z0-9]', '', kenteken_arg.upper())
-                                        from bridge.api import rdw_lookup
-                                        rdw_data = await rdw_lookup(clean_kt)
-                                        if isinstance(rdw_data, dict) and rdw_data.get("status") == "success":
-                                            await _broadcast({"type": "vehicle_data", "data": rdw_data["data"]})
-                                    except Exception as ve:
-                                        logger.error(f"vehicle_data broadcast error: {ve}")
-
-                                tool_responses.append({
-                                    "id": call_id,
-                                    "name": f_name,
-                                    "response": {"result": result}
-                                })
-
-                            await gemini_ws.send(json.dumps({"toolResponse": {"functionResponses": tool_responses}}))
-
-                        if "serverContent" in response:
-                            model_turn = response["serverContent"].get("modelTurn", {})
-                            parts = model_turn.get("parts", [])
-
-                            if parts:
-                                await _broadcast({"type": "call_state", "state": "harry_talking"})
-
-                            for part in parts:
-                                if "inlineData" in part:
-                                    mime_type = part["inlineData"]["mimeType"]
-                                    if mime_type.startswith("audio"):
-                                        # Suppress Gemini audio during takeover
-                                        if _active_sessions.get("twilio", {}).get("takeover"):
-                                            continue
-
-                                        b64_data = part["inlineData"]["data"]
-                                        pcm_data = base64.b64decode(b64_data)
-                                        mulaw_chunk = resampler.pcm_24k_to_mulaw(pcm_data)
-
-                                        if stream_sid:
-                                            media_message = {
-                                                "event": "media",
-                                                "streamSid": stream_sid,
-                                                "media": {
-                                                    "payload": base64.b64encode(mulaw_chunk).decode("utf-8")
-                                                }
-                                            }
-                                            await websocket.send_text(json.dumps(media_message))
-
-                                if "text" in part:
-                                    text_content = part["text"]
-                                    match = SENTIMENT_PATTERN.search(text_content)
-                                    if match:
-                                        sentiment = match.group(1)
-                                        await _broadcast({"type": "sentiment", "emoji": sentiment})
-                                        text_content = SENTIMENT_PATTERN.sub("", text_content)
-                                    text_content = THOUGHT_PATTERN.sub("", text_content)
-                                    text_content = BOLD_HEADER_PATTERN.sub("", text_content)
-                                    text_content = CONTROL_CHAR_PATTERN.sub("", text_content)
-                                    text_content = text_content.strip()
-                                    if text_content:
-                                        current_turn_text += " " + text_content
-                                        await _broadcast({"type": "thought", "text": text_content})
-
-                        sc = response.get("serverContent", {})
-                        input_transcription = (
-                            response.get("inputAudioTranscription")
-                            or sc.get("inputAudioTranscription")
-                            or sc.get("inputTranscription")
-                        )
-                        if input_transcription:
-                            chunk = input_transcription if isinstance(input_transcription, str) else input_transcription.get("text", "")
-                            if chunk:
-                                pending_caller_transcript += chunk
-
-                        output_transcription = (
-                            response.get("outputAudioTranscription")
-                            or sc.get("outputAudioTranscription")
-                            or sc.get("outputTranscription")
-                        )
-                        if output_transcription:
-                            chunk = output_transcription if isinstance(output_transcription, str) else output_transcription.get("text", "")
-                            if chunk:
-                                pending_assistant_transcript += chunk
-
-                        is_turn_complete = "turnComplete" in response or response.get("serverContent", {}).get("turnComplete", False)
-                        if is_turn_complete:
-                            if pending_caller_transcript.strip():
-                                caller_text = pending_caller_transcript.strip()
-                                session_transcript.append({"role": "user", "text": caller_text, "timestamp": datetime.now().isoformat(), "type": "speech"})
-                                await _broadcast({"type": "transcript", "role": "user", "text": caller_text})
-                                pending_caller_transcript = ""
-
-                            if pending_assistant_transcript.strip():
-                                full_text = pending_assistant_transcript.strip()
-                                session_transcript.append({"role": "assistant", "text": full_text, "timestamp": datetime.now().isoformat(), "type": "speech"})
-                                await _broadcast({"type": "transcript", "role": "assistant", "text": full_text})
-                                pending_assistant_transcript = ""
-
-                            turn_text = current_turn_text.strip()
-                            if turn_text:
-                                recent_responses.append(turn_text)
-                                if len(recent_responses) > 5:
-                                    recent_responses.pop(0)
-
-                                if _is_loop_detected(recent_responses):
-                                    loop_break_attempts += 1
-                                    logger.warning(f"[LOOP] Twilio: loop detected (attempt {loop_break_attempts})")
-                                    if loop_break_attempts >= 2:
-                                        goodbye_msg = {
-                                            "client_content": {
-                                                "turns": [{"role": "user", "parts": [{"text": "Excuus, ik verstond u niet goed. Belt u ons gerust terug op 0546-577766. Tot ziens!"}]}],
-                                                "turn_complete": True
-                                            }
-                                        }
-                                        await gemini_ws.send(json.dumps(goodbye_msg))
-
-                            current_turn_text = ""
-
-                except Exception as e:
-                    logger.error(f"Error in receive_from_gemini: {e}")
-
-            task1 = asyncio.create_task(receive_from_twilio())
-            task2 = asyncio.create_task(receive_from_gemini())
-
-            done, pending = await asyncio.wait(
-                [task1, task2],
-                return_when=asyncio.FIRST_COMPLETED
-            )
-
-            for task in pending:
-                task.cancel()
-
-            if session_transcript:
-                try:
-                    _save_transcript("twilio", session_start, session_transcript, session_tools_used, session_sentiments)
-                except Exception as te:
-                    logger.error(f"Failed to save Twilio transcript: {te}")
+        if session_transcript:
+            try:
+                _save_transcript("twilio", session_start, session_transcript, session_tools_used, session_sentiments)
+            except Exception as te:
+                logger.error(f"Failed to save Twilio transcript: {te}")
 
     except Exception as e:
         logger.error(f"Bridge error: {e}")
         await websocket.close()
     finally:
+        await tts.close()
+        await stt.close()
         await _broadcast({"type": "call_state", "state": "idle"})
         _active_sessions.pop("twilio", None)
 
@@ -689,7 +708,7 @@ async def websocket_web_endpoint(websocket: WebSocket):
         if twilio_session:
             if twilio_session.get("takeover"):
                 await websocket.send_text(json.dumps({"type": "call_state", "state": "takeover"}))
-            elif twilio_session.get("gemini_ws"):
+            elif twilio_session.get("llm"):
                 await websocket.send_text(json.dumps({"type": "call_state", "state": "harry_talking"}))
 
         try:
@@ -704,28 +723,16 @@ async def websocket_web_endpoint(websocket: WebSocket):
                     if action == "start" and twilio_session:
                         twilio_session["takeover"] = True
                         logger.info("[TAKEOVER] Owner taking over from monitor")
-                        gemini_ws = twilio_session.get("gemini_ws")
-                        if gemini_ws:
-                            silence_msg = {
-                                "client_content": {
-                                    "turns": [{"role": "user", "parts": [{"text": "SYSTEM: The garage owner is now speaking directly to the customer. Be completely silent."}]}],
-                                    "turn_complete": True
-                                }
-                            }
-                            await gemini_ws.send(json.dumps(silence_msg))
+                        twilio_llm = twilio_session.get("llm")
+                        if twilio_llm:
+                            twilio_llm.add_context("SYSTEM: The garage owner is now speaking directly to the customer. Be completely silent.")
                         await _broadcast({"type": "call_state", "state": "takeover"})
                     elif action == "stop" and twilio_session:
                         twilio_session["takeover"] = False
                         logger.info("[TAKEOVER] Returning control to Harry from monitor")
-                        gemini_ws = twilio_session.get("gemini_ws")
-                        if gemini_ws:
-                            resume_msg = {
-                                "client_content": {
-                                    "turns": [{"role": "user", "parts": [{"text": "SYSTEM: The garage owner has finished. You (Harry) can resume the conversation."}]}],
-                                    "turn_complete": True
-                                }
-                            }
-                            await gemini_ws.send(json.dumps(resume_msg))
+                        twilio_llm = twilio_session.get("llm")
+                        if twilio_llm:
+                            twilio_llm.add_context("SYSTEM: The garage owner has finished. You (Harry) can resume the conversation.")
                         await _broadcast({"type": "call_state", "state": "harry_talking"})
 
                 elif msg_type == "takeover_audio":
@@ -767,398 +774,305 @@ async def websocket_web_endpoint(websocket: WebSocket):
     session_start = datetime.now()
     recent_responses: list[str] = []
     loop_break_attempts = 0
-    current_turn_text = ""
+
+    # Initialize pipeline components
+    web_stt = DeepgramSTT(language="multi", sample_rate=16000)
+    web_llm = GeminiLLM(system_instruction=_build_system_instruction(), tools_schema=TOOLS_SCHEMA)
+    web_tts = ElevenLabsStreamer(output_format="pcm_24000")
+    await web_tts.connect()  # Pre-connect to eliminate first-response delay
+    web_noise_mixer = OfficeNoiseMixer(sample_rate=24000)
+    is_speaking = False
+    generating_task: asyncio.Task | None = None
+
+    async def emit_vehicle_data_web(kenteken: str):
+        clean_kt = re.sub(r'[^A-Z0-9]', '', kenteken.upper())
+        from bridge.api import rdw_lookup
+        rdw_data = await rdw_lookup(clean_kt)
+        if isinstance(rdw_data, dict) and rdw_data.get("status") == "success":
+            await websocket.send_text(json.dumps({"type": "vehicle_data", "data": rdw_data["data"]}))
+
+    async def web_broadcast(msg: dict):
+        """Send to this web client (acts as its own broadcast)."""
+        try:
+            await websocket.send_text(json.dumps(msg))
+        except Exception:
+            pass
 
     try:
-        async with websockets.connect(GEMINI_URI) as gemini_ws:
-            logger.info("Connected to Gemini Live API (Web Mode)")
+        await web_stt.connect()
+        logger.info("Deepgram STT connected for Web call")
 
-            setup_config = {
-                "setup": {
-                    "model": GEMINI_MODEL,
-                    "systemInstruction": {"parts": [{"text": _build_system_instruction()}]},
-                    "tools": TOOLS_SCHEMA,
-                    "generation_config": {
-                        "response_modalities": ["AUDIO"],
-                        "speech_config": {
-                            "voice_config": {"prebuilt_voice_config": {"voice_name": "Orus"}}
-                        }
-                    },
-                    "inputAudioTranscription": {},
-                    "outputAudioTranscription": {}
-                }
-            }
-            await gemini_ws.send(json.dumps(setup_config))
-            logger.info("Sent Gemini setup config")
+        # Task 1: Relay ElevenLabs audio → noise mix → web client
+        async def relay_tts_to_web():
+            try:
+                while True:
+                    try:
+                        audio_chunk = await asyncio.wait_for(web_tts.get_audio(), timeout=1.0)
+                    except asyncio.TimeoutError:
+                        # No noise during idle — prevents audio buffer buildup
+                        continue
 
-            # Trigger initial greeting with explicit instruction
-            initial_msg = {
-                "client_content": {
-                    "turns": [{
-                        "role": "user",
-                        "parts": [{"text": "START: Een nieuwe klant is verbonden. Begroet de klant nu met je standaard begroeting."}]
-                    }],
-                    "turn_complete": True
-                }
-            }
-            await gemini_ws.send(json.dumps(initial_msg))
-            logger.info("Triggered initial AI greeting")
+                    if audio_chunk is None:
+                        break
+                    mixed = web_noise_mixer.mix_into_pcm(audio_chunk)
+                    b64_audio = base64.b64encode(mixed).decode("utf-8")
+                    await websocket.send_text(json.dumps({"type": "audio", "audio": b64_audio}))
+            except asyncio.CancelledError:
+                pass
+            except Exception as e:
+                logger.error(f"Error in relay_tts_to_web: {e}")
 
-            last_sent_sentiment = "😐"
+        web_tts_relay_task = asyncio.create_task(relay_tts_to_web())
 
-            async def receive_from_web():
+        # Shared: generate a turn (LLM → TTS)
+        generation_start_time = 0.0
+
+        async def generate_turn(user_text: str):
+            nonlocal is_speaking, loop_break_attempts, generation_start_time
+            is_speaking = True
+            generation_start_time = asyncio.get_event_loop().time()
+            await websocket.send_text(json.dumps({"type": "call_state", "state": "harry_talking"}))
+            logger.info(f"[WEB] generate_turn starting: '{user_text[:80]}'")
+
+            full_response = ""
+
+            async def on_text_chunk(chunk: str):
+                nonlocal full_response
+                full_response += chunk
+                display = chunk
+                match = SENTIMENT_PATTERN.search(display)
+                if match:
+                    await websocket.send_text(json.dumps({"type": "sentiment", "emoji": match.group(1)}))
+                    display = SENTIMENT_PATTERN.sub("", display)
+                display = THOUGHT_PATTERN.sub("", display)
+                display = BOLD_HEADER_PATTERN.sub("", display)
+                display = CONTROL_CHAR_PATTERN.sub("", display).strip()
+                if display:
+                    await websocket.send_text(json.dumps({"type": "thought", "text": display}))
+                    # Send cleaned text to TTS (no sentiment markers, formatting, etc.)
+                    await web_tts.send_text(display)
+
+            async def on_tool_call(name: str, args: dict) -> str:
+                await websocket.send_text(json.dumps({"type": "call_state", "state": "processing"}))
+                return await _handle_tool_call(
+                    name, args, session_tools_used, session_transcript,
+                    session_sentiments, web_broadcast, emit_vehicle_data_web
+                )
+
+            try:
+                await web_llm.generate_response(user_text, on_text_chunk, on_tool_call)
+                await web_tts.flush()
+            except asyncio.CancelledError:
+                logger.info("[WEB] generate_turn cancelled (interruption)")
+                raise
+            except Exception as e:
+                logger.error(f"Web LLM generate error: {e}", exc_info=True)
+
+            clean_response = SENTIMENT_PATTERN.sub("", full_response)
+            clean_response = THOUGHT_PATTERN.sub("", clean_response)
+            clean_response = BOLD_HEADER_PATTERN.sub("", clean_response)
+            clean_response = CONTROL_CHAR_PATTERN.sub("", clean_response).strip()
+            if clean_response:
+                session_transcript.append({"role": "assistant", "text": clean_response, "timestamp": datetime.now().isoformat(), "type": "speech"})
                 try:
-                    while True:
-                        message = await websocket.receive_text()
-                        data = json.loads(message)
-                        msg_type = data.get("type")
+                    await websocket.send_text(json.dumps({"type": "transcript", "role": "assistant", "text": clean_response}))
+                except Exception:
+                    pass  # WebSocket may be closed
 
-                        if msg_type == "audio":
-                            b64_pcm = data["data"]
-                            realtime_input = {
-                                "realtime_input": {
-                                    "media_chunks": [{
-                                        "mime_type": "audio/pcm",
-                                        "data": b64_pcm
-                                    }]
-                                }
-                            }
-                            await gemini_ws.send(json.dumps(realtime_input))
+                recent_responses.append(clean_response)
+                if len(recent_responses) > 5:
+                    recent_responses.pop(0)
+                if _is_loop_detected(recent_responses):
+                    loop_break_attempts += 1
+            else:
+                logger.warning(f"[WEB] generate_turn produced empty response for: '{user_text[:80]}'")
 
-                        elif msg_type == "set_language":
-                            lang = data.get("value", "en")
-                            logger.info(f"Language switch requested: {lang}")
-                            if lang == "nl":
-                                switch_msg = {
-                                    "client_content": {
-                                        "turns": [{"role": "user", "parts": [{"text": "LANGUAGE_SWITCH: Switch to Dutch now."}]}],
-                                        "turn_complete": True
-                                    }
-                                }
-                            else:
-                                switch_msg = {
-                                    "client_content": {
-                                        "turns": [{"role": "user", "parts": [{"text": "LANGUAGE_SWITCH: Switch to English now."}]}],
-                                        "turn_complete": True
-                                    }
-                                }
-                            await gemini_ws.send(json.dumps(switch_msg))
+            web_llm.trim_history()
+            is_speaking = False
+            try:
+                await websocket.send_text(json.dumps({"type": "call_state", "state": "idle"}))
+            except Exception:
+                pass  # WebSocket may be closed
+            logger.info(f"[WEB] generate_turn done: '{clean_response[:80]}'" if clean_response else "[WEB] generate_turn done (empty)")
 
-                        elif msg_type == "text":
-                            text_content = data.get("text", "")
-                            if text_content:
-                                logger.info(f"Text message received: {text_content}")
-                                text_msg = {
-                                    "client_content": {
-                                        "turns": [{"role": "user", "parts": [{"text": text_content}]}],
-                                        "turn_complete": True
-                                    }
-                                }
-                                await gemini_ws.send(json.dumps(text_msg))
+        # Trigger greeting
+        generating_task = asyncio.create_task(generate_turn(
+            "START: Een nieuwe klant is verbonden. Begroet de klant nu met je standaard begroeting."
+        ))
 
-                        elif msg_type == "update_prompt":
-                            new_prompt = data.get("prompt", "")
-                            if new_prompt:
-                                logger.info(f"Updating system prompt to: {new_prompt[:50]}...")
-                                update_msg = {
-                                    "client_content": {
-                                        "turns": [{"role": "user", "parts": [{"text": f"SYSTEM_UPDATE: From now on, follow these instructions: {new_prompt}"}]}],
-                                        "turn_complete": True
-                                    }
-                                }
-                                await gemini_ws.send(json.dumps(update_msg))
+        # Task 2: Receive from web client (audio, text, commands)
+        async def receive_from_web():
+            nonlocal is_speaking, generating_task
+            try:
+                while True:
+                    message = await websocket.receive_text()
+                    data = json.loads(message)
+                    msg_type = data.get("type")
 
-                        elif msg_type == "takeover":
-                            action = data.get("action")
-                            twilio_session = _active_sessions.get("twilio")
-                            if action == "start" and twilio_session:
-                                twilio_session["takeover"] = True
-                                logger.info("[TAKEOVER] Owner taking over Twilio call")
-                                # Tell Gemini to be silent
-                                silence_msg = {
-                                    "client_content": {
-                                        "turns": [{"role": "user", "parts": [{"text": "SYSTEM: The garage owner is now speaking directly to the customer. Be completely silent. Do not respond with audio or text until told to resume."}]}],
-                                        "turn_complete": True
-                                    }
-                                }
-                                await twilio_session["gemini_ws"].send(json.dumps(silence_msg))
-                                await websocket.send_text(json.dumps({"type": "call_state", "state": "takeover"}))
-                            elif action == "stop" and twilio_session:
-                                twilio_session["takeover"] = False
-                                logger.info("[TAKEOVER] Returning control to Harry")
-                                resume_msg = {
-                                    "client_content": {
-                                        "turns": [{"role": "user", "parts": [{"text": "SYSTEM: The garage owner has finished. You (Harry) can resume the conversation with the customer now."}]}],
-                                        "turn_complete": True
-                                    }
-                                }
-                                await twilio_session["gemini_ws"].send(json.dumps(resume_msg))
-                                await websocket.send_text(json.dumps({"type": "call_state", "state": "idle"}))
+                    if msg_type == "audio":
+                        # Decode and forward to Deepgram
+                        b64_pcm = data["data"]
+                        pcm_bytes = base64.b64decode(b64_pcm)
+                        await web_stt.send_audio(pcm_bytes)
 
-                        elif msg_type == "takeover_audio":
-                            # Owner's audio → forward to Twilio caller
-                            twilio_session = _active_sessions.get("twilio")
-                            if twilio_session and twilio_session.get("takeover"):
-                                twilio_ws = twilio_session.get("twilio_ws")
-                                if twilio_ws:
-                                    try:
-                                        b64_pcm = data.get("data", "")
-                                        pcm_bytes = base64.b64decode(b64_pcm)
-                                        resampler = AudioResampler()
-                                        mulaw_chunk = resampler.pcm_16k_to_mulaw(pcm_bytes)
-                                        # Get stream_sid from the Twilio session — we need it for media messages
-                                        # Since we can't easily get stream_sid here, send clear event
-                                        # Actually, for Twilio we need stream_sid. We'll need to store it.
-                                        # For now, use a simple approach: store stream_sid in session
-                                        stream_sid = twilio_session.get("stream_sid")
-                                        if stream_sid:
-                                            media_message = {
-                                                "event": "media",
-                                                "streamSid": stream_sid,
-                                                "media": {
-                                                    "payload": base64.b64encode(mulaw_chunk).decode("utf-8")
-                                                }
-                                            }
-                                            await twilio_ws.send_text(json.dumps(media_message))
-                                    except Exception as ta_err:
-                                        logger.error(f"Takeover audio forward error: {ta_err}")
+                    elif msg_type == "text":
+                        text_content = data.get("text", "")
+                        if text_content:
+                            # Direct text input — bypass STT
+                            session_transcript.append({"role": "user", "text": text_content, "timestamp": datetime.now().isoformat(), "type": "speech"})
+                            await websocket.send_text(json.dumps({"type": "transcript", "role": "user", "text": text_content}))
+                            generating_task = asyncio.create_task(generate_turn(text_content))
 
-                except WebSocketDisconnect:
-                    logger.info("Web client disconnected")
-                except Exception as e:
-                    logger.error(f"Error in receive_from_web: {e}")
+                    elif msg_type == "set_language":
+                        lang = data.get("value", "en")
+                        if lang == "nl":
+                            web_llm.add_context("LANGUAGE_SWITCH: Switch to Dutch now.")
+                        else:
+                            web_llm.add_context("LANGUAGE_SWITCH: Switch to English now.")
 
-            async def receive_from_gemini():
-                nonlocal last_sent_sentiment, current_turn_text, loop_break_attempts
-                current_state = CallState.IDLE
-                pending_assistant_transcript = ""
-                pending_caller_transcript = ""
+                    elif msg_type == "update_prompt":
+                        new_prompt = data.get("prompt", "")
+                        if new_prompt:
+                            web_llm.add_context(f"SYSTEM_UPDATE: From now on, follow these instructions: {new_prompt}")
 
-                async def emit_state(new_state: CallState):
-                    nonlocal current_state
-                    if new_state != current_state:
-                        current_state = new_state
-                        await websocket.send_text(json.dumps({
-                            "type": "call_state",
-                            "state": new_state.value
-                        }))
+                    elif msg_type == "takeover":
+                        action = data.get("action")
+                        twilio_session = _active_sessions.get("twilio")
+                        if action == "start" and twilio_session:
+                            twilio_session["takeover"] = True
+                            logger.info("[TAKEOVER] Owner taking over Twilio call")
+                            twilio_llm = twilio_session.get("llm")
+                            if twilio_llm:
+                                twilio_llm.add_context("SYSTEM: The garage owner is now speaking directly to the customer. Be completely silent.")
+                            await websocket.send_text(json.dumps({"type": "call_state", "state": "takeover"}))
+                        elif action == "stop" and twilio_session:
+                            twilio_session["takeover"] = False
+                            logger.info("[TAKEOVER] Returning control to Harry")
+                            twilio_llm = twilio_session.get("llm")
+                            if twilio_llm:
+                                twilio_llm.add_context("SYSTEM: The garage owner has finished. You (Harry) can resume the conversation.")
+                            await websocket.send_text(json.dumps({"type": "call_state", "state": "idle"}))
 
-                try:
-                    async for message in gemini_ws:
-                        response = json.loads(message)
-
-                        keys = list(response.keys())
-                        sc = response.get("serverContent", {})
-                        sc_keys = list(sc.keys()) if sc else []
-                        if keys != ["serverContent"] or "modelTurn" not in sc:
-                            logger.info(f"[GEMINI] keys={keys} serverContent_keys={sc_keys}")
-
-                        if "serverContent" in response:
-                            model_turn = response["serverContent"].get("modelTurn", {})
-                            parts = model_turn.get("parts", [])
-
-                            if parts:
-                                await emit_state(CallState.HARRY_TALKING)
-
-                            for part in parts:
-                                if "inlineData" in part:
-                                    b64_data = part["inlineData"]["data"]
-                                    await websocket.send_text(json.dumps({
-                                        "type": "audio",
-                                        "audio": b64_data
-                                    }))
-                                if "text" in part:
-                                    text_content = part["text"]
-
-                                    match = SENTIMENT_PATTERN.search(text_content)
-                                    if match:
-                                        sentiment = match.group(1)
-                                        await websocket.send_text(json.dumps({
-                                            "type": "sentiment",
-                                            "emoji": sentiment
-                                        }))
-                                        text_content = SENTIMENT_PATTERN.sub("", text_content)
-
-                                    text_content = THOUGHT_PATTERN.sub("", text_content)
-                                    text_content = BOLD_HEADER_PATTERN.sub("", text_content)
-                                    text_content = CONTROL_CHAR_PATTERN.sub("", text_content)
-                                    text_content = text_content.strip()
-
-                                    if text_content:
-                                        current_turn_text += " " + text_content
-                                        await websocket.send_text(json.dumps({
-                                            "type": "thought",
-                                            "text": text_content
-                                        }))
-
-                        input_transcription = (
-                            response.get("inputAudioTranscription")
-                            or sc.get("inputAudioTranscription")
-                            or sc.get("inputTranscription")
-                        )
-                        if input_transcription:
-                            chunk = input_transcription.get("text", "") if isinstance(input_transcription, dict) else (input_transcription if isinstance(input_transcription, str) else "")
-                            if chunk:
-                                pending_caller_transcript += chunk
-
-                        output_transcription = (
-                            response.get("outputAudioTranscription")
-                            or sc.get("outputAudioTranscription")
-                            or sc.get("outputTranscription")
-                        )
-                        if output_transcription:
-                            chunk = output_transcription.get("text", "") if isinstance(output_transcription, dict) else (output_transcription if isinstance(output_transcription, str) else "")
-                            if chunk:
-                                pending_assistant_transcript += chunk
-
-                        is_turn_complete = "turnComplete" in response or response.get("serverContent", {}).get("turnComplete", False)
-                        if is_turn_complete:
-                            if pending_caller_transcript.strip():
-                                caller_text = pending_caller_transcript.strip()
-                                session_transcript.append({"role": "user", "text": caller_text, "timestamp": datetime.now().isoformat(), "type": "speech"})
-                                await websocket.send_text(json.dumps({
-                                    "type": "transcript",
-                                    "role": "user",
-                                    "text": caller_text
-                                }))
-                                pending_caller_transcript = ""
-
-                            if pending_assistant_transcript.strip():
-                                full_text = pending_assistant_transcript.strip()
-                                session_transcript.append({"role": "assistant", "text": full_text, "timestamp": datetime.now().isoformat(), "type": "speech"})
-                                await websocket.send_text(json.dumps({
-                                    "type": "transcript",
-                                    "role": "assistant",
-                                    "text": full_text
-                                }))
-                                pending_assistant_transcript = ""
-                            await emit_state(CallState.IDLE)
-
-                            turn_text = current_turn_text.strip()
-                            if turn_text:
-                                recent_responses.append(turn_text)
-                                if len(recent_responses) > 5:
-                                    recent_responses.pop(0)
-
-                                if _is_loop_detected(recent_responses):
-                                    loop_break_attempts += 1
-                                    logger.warning(f"[LOOP] Web: loop detected (attempt {loop_break_attempts})")
-                                    if loop_break_attempts >= 2:
-                                        goodbye_msg = {
-                                            "client_content": {
-                                                "turns": [{"role": "user", "parts": [{"text": "Excuus, ik verstond u niet goed. Belt u ons gerust terug op 0546-577766. Tot ziens!"}]}],
-                                                "turn_complete": True
-                                            }
-                                        }
-                                        await gemini_ws.send(json.dumps(goodbye_msg))
-
-                            current_turn_text = ""
-
-                        # Tool Handling
-                        if "toolCall" in response:
-                            await emit_state(CallState.PROCESSING)
-                            tool_calls = response["toolCall"]["functionCalls"]
-                            tool_responses = []
-                            for call in tool_calls:
-                                f_name = call["name"]
-                                f_args = call["args"]
-                                call_id = call["id"]
-
-                                session_tools_used.append({"name": f_name, "args": f_args, "timestamp": datetime.now().isoformat()})
-                                session_transcript.append({"role": "system", "text": f"Tool: {f_name}({json.dumps(f_args)})", "timestamp": datetime.now().isoformat(), "type": "tool_call"})
-
-                                if f_name != "report_sentiment":
-                                    await websocket.send_text(json.dumps({
-                                        "type": "tool_call",
-                                        "name": f_name,
-                                        "args": f_args
-                                    }))
-
+                    elif msg_type == "takeover_audio":
+                        twilio_session = _active_sessions.get("twilio")
+                        if twilio_session and twilio_session.get("takeover"):
+                            twilio_ws = twilio_session.get("twilio_ws")
+                            s_sid = twilio_session.get("stream_sid")
+                            if twilio_ws and s_sid:
                                 try:
-                                    if f_name == "report_sentiment":
-                                        sentiment_map = {
-                                            "happy": "🙂",
-                                            "neutral": "😐",
-                                            "frustrated": "😠",
-                                            "sad": "😢"
-                                        }
-                                        sentiment = f_args.get("sentiment", "neutral")
-                                        emoji = sentiment_map.get(sentiment, "😐")
-                                        logger.info(f"[SENTIMENT] Web call: {sentiment} -> {emoji}")
-                                        session_sentiments.append(sentiment)
-                                        await websocket.send_text(json.dumps({
-                                            "type": "sentiment",
-                                            "emoji": emoji
-                                        }))
-                                        result = "ok"
-                                    elif f_name == "request_appointment":
-                                        result = await _execute_tool(f_name, f_args)
-                                        # Fire owner notification email
-                                        try:
-                                            from bridge.email import send_owner_notification
-                                            send_owner_notification(
-                                                customer_name=f_args.get("customer_name", ""),
-                                                phone_number=f_args.get("phone_number", ""),
-                                                customer_email=f_args.get("customer_email", ""),
-                                                date_time=f_args.get("date_time", ""),
-                                                description=f_args.get("description", ""),
-                                                kenteken=f_args.get("kenteken", ""),
-                                            )
-                                        except Exception as email_err:
-                                            logger.error(f"Owner notification failed: {email_err}")
-                                    else:
-                                        result = await _execute_tool(f_name, f_args)
-                                except Exception as e:
-                                    result = f"Tool Execution Error: {e}"
-
-                                session_transcript.append({"role": "system", "text": f"Result: {str(result)[:200]}", "timestamp": datetime.now().isoformat(), "type": "tool_result"})
-
-                                if f_name != "report_sentiment":
-                                    await websocket.send_text(json.dumps({
-                                        "type": "tool_result",
-                                        "name": f_name,
-                                        "result": str(result)[:500]
+                                    b64_pcm = data.get("data", "")
+                                    pcm_bytes = base64.b64decode(b64_pcm)
+                                    r = AudioResampler()
+                                    mulaw_chunk = r.pcm_16k_to_mulaw(pcm_bytes)
+                                    await twilio_ws.send_text(json.dumps({
+                                        "event": "media", "streamSid": s_sid,
+                                        "media": {"payload": base64.b64encode(mulaw_chunk).decode("utf-8")}
                                     }))
+                                except Exception as ta_err:
+                                    logger.error(f"Takeover audio forward error: {ta_err}")
 
-                                # Send structured vehicle_data for RDW lookups
-                                if f_name == "lookup_vehicle_rdw" and "Voertuig gevonden" in str(result):
-                                    try:
-                                        kenteken_arg = f_args.get("kenteken", "")
-                                        clean_kt = re.sub(r'[^A-Z0-9]', '', kenteken_arg.upper())
-                                        from bridge.api import rdw_lookup
-                                        rdw_data = await rdw_lookup(clean_kt)
-                                        if isinstance(rdw_data, dict) and rdw_data.get("status") == "success":
-                                            await websocket.send_text(json.dumps({
-                                                "type": "vehicle_data",
-                                                "data": rdw_data["data"]
-                                            }))
-                                    except Exception as ve:
-                                        logger.error(f"vehicle_data WS send error: {ve}")
+            except WebSocketDisconnect:
+                logger.info("Web client disconnected")
+            except Exception as e:
+                logger.error(f"Error in receive_from_web: {e}")
 
-                                tool_responses.append({"id": call_id, "name": f_name, "response": {"result": result}})
-
-                            await gemini_ws.send(json.dumps({"toolResponse": {"functionResponses": tool_responses}}))
-
-                except Exception as e:
-                    logger.error(f"Error in receive_from_gemini: {e}")
-
-            task1 = asyncio.create_task(receive_from_web())
-            task2 = asyncio.create_task(receive_from_gemini())
-
-            done, pending = await asyncio.wait(
-                [task1, task2],
-                return_when=asyncio.FIRST_COMPLETED
-            )
-
-            for task in pending:
-                task.cancel()
-
-            if session_transcript:
+        # Helper: cancel any in-progress generation
+        async def cancel_generation():
+            nonlocal is_speaking, generating_task
+            if generating_task and not generating_task.done():
+                logger.info("[WEB] cancel_generation: cancelling active task")
+                web_llm.cancel()
+                await web_tts.cancel()
+                generating_task.cancel()
                 try:
-                    _save_transcript("web", session_start, session_transcript, session_tools_used, session_sentiments)
-                except Exception as te:
-                    logger.error(f"Failed to save Web transcript: {te}")
+                    await generating_task
+                except asyncio.CancelledError:
+                    pass
+            elif generating_task and generating_task.done():
+                # Check if previous task had an exception we missed
+                exc = generating_task.exception() if not generating_task.cancelled() else None
+                if exc:
+                    logger.error(f"[WEB] cancel_generation: previous task had unhandled exception: {exc}")
+            is_speaking = False
+
+        # Task 3: Process Deepgram STT events — respond immediately, no debounce
+        async def process_web_stt():
+            nonlocal is_speaking, generating_task
+            accumulated_text = ""
+            logger.info("[WEB] process_web_stt started")
+            try:
+                while True:
+                    event = await web_stt.event_queue.get()
+                    if event is None:
+                        logger.info("[WEB] STT event queue closed (None received)")
+                        break
+
+                    logger.info(f"[WEB] STT event: type={event.type}, text='{event.text[:80] if event.text else ''}', accumulated='{accumulated_text[:40]}', is_speaking={is_speaking}")
+
+                    if event.type == "speech_started":
+                        # Don't interrupt based on speech_started alone — it fires
+                        # from TTS audio leaking into the mic (echo). Only interrupt
+                        # when we get actual transcript text (speech_final/utterance_end).
+                        logger.debug(f"[WEB] speech_started (is_speaking={is_speaking}) — ignoring, will interrupt on actual text")
+
+                    elif event.type == "transcript_interim":
+                        pass  # Log only, no action needed
+
+                    elif event.type == "transcript_final":
+                        accumulated_text += " " + event.text
+                        logger.info(f"[WEB] Accumulated text now: '{accumulated_text.strip()[:80]}'")
+
+                    elif event.type == "speech_final":
+                        accumulated_text += " " + event.text
+                        user_text = accumulated_text.strip()
+                        accumulated_text = ""
+                        if user_text:
+                            logger.info(f"[WEB] speech_final → generating response for: '{user_text[:80]}'")
+                            await cancel_generation()
+                            session_transcript.append({"role": "user", "text": user_text, "timestamp": datetime.now().isoformat(), "type": "speech"})
+                            await websocket.send_text(json.dumps({"type": "transcript", "role": "user", "text": user_text}))
+                            generating_task = asyncio.create_task(generate_turn(user_text))
+                        else:
+                            logger.info("[WEB] speech_final but empty text, ignoring")
+
+                    elif event.type == "utterance_end":
+                        user_text = accumulated_text.strip()
+                        accumulated_text = ""
+                        if user_text:
+                            logger.info(f"[WEB] utterance_end → generating response for: '{user_text[:80]}'")
+                            await cancel_generation()
+                            session_transcript.append({"role": "user", "text": user_text, "timestamp": datetime.now().isoformat(), "type": "speech"})
+                            await websocket.send_text(json.dumps({"type": "transcript", "role": "user", "text": user_text}))
+                            generating_task = asyncio.create_task(generate_turn(user_text))
+                        else:
+                            logger.debug("[WEB] utterance_end but no accumulated text")
+            except asyncio.CancelledError:
+                logger.info("[WEB] process_web_stt cancelled")
+            except Exception as e:
+                logger.error(f"Error in process_web_stt: {e}", exc_info=True)
+
+        task1 = asyncio.create_task(receive_from_web())
+        task2 = asyncio.create_task(process_web_stt())
+
+        done, pending = await asyncio.wait(
+            [task1, task2],
+            return_when=asyncio.FIRST_COMPLETED
+        )
+
+        for task in pending:
+            task.cancel()
+
+        web_tts_relay_task.cancel()
+
+        if session_transcript:
+            try:
+                _save_transcript("web", session_start, session_transcript, session_tools_used, session_sentiments)
+            except Exception as te:
+                logger.error(f"Failed to save Web transcript: {te}")
 
     except Exception as e:
         logger.error(f"Web Bridge error: {e}")
         await websocket.close()
+    finally:
+        await web_tts.close()
+        await web_stt.close()

@@ -4,6 +4,7 @@ import { AudioEngine } from "./audio-engine"
 // --- Bridge URL (runtime, not build-time) ---
 
 function getBridgeUrl(): string {
+  if (process.env.NEXT_PUBLIC_BRIDGE_URL) return process.env.NEXT_PUBLIC_BRIDGE_URL
   if (typeof window !== "undefined") return window.location.origin
   return "http://localhost:8000"
 }
@@ -270,6 +271,10 @@ export const useGarageStore = create<GarageStore>((set, get) => ({
       switch (data.type) {
         case "audio":
           audio.playChunk(data.audio)
+          break
+
+        case "audio_clear":
+          audio.clearQueue()
           break
 
         case "transcript": {

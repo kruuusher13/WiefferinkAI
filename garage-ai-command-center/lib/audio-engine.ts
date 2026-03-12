@@ -112,6 +112,13 @@ export class AudioEngine {
     this.nextPlayTime += buffer.duration
   }
 
+  clearQueue(): void {
+    // Reset playback timing so next chunk plays immediately
+    if (this.playbackCtx) {
+      this.nextPlayTime = this.playbackCtx.currentTime
+    }
+  }
+
   stopCapture(): void {
     this.workletNode?.disconnect()
     this.sourceNode?.disconnect()

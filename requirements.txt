@@ -8,6 +8,9 @@ python-dotenv
 numpy
 scipy
 
+# Voice Synthesis (ElevenLabs)
+# Uses WebSocket streaming API directly — no SDK needed
+
 # Communication
 gTTS
 twilio
