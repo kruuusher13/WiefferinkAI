@@ -540,6 +540,7 @@ async def websocket_endpoint(websocket: WebSocket):
                 is_speaking = True
                 twilio_gen_start_time = asyncio.get_event_loop().time()
                 await _broadcast({"type": "call_state", "state": "harry_talking"})
+                logger.info(f"[TWILIO] generate_turn starting: '{user_text[:80]}'")
 
                 full_response = ""
 
@@ -569,10 +570,16 @@ async def websocket_endpoint(websocket: WebSocket):
                     )
 
                 try:
+                    logger.info("[TWILIO] calling llm.generate_response...")
                     await llm.generate_response(user_text, on_text_chunk, on_tool_call)
+                    logger.info("[TWILIO] LLM done, flushing TTS...")
                     await tts.flush()
+                    logger.info("[TWILIO] TTS flushed")
+                except asyncio.CancelledError:
+                    logger.info("[TWILIO] generate_turn cancelled")
+                    raise
                 except Exception as e:
-                    logger.error(f"LLM generate error: {e}")
+                    logger.error(f"[TWILIO] LLM generate error: {e}", exc_info=True)
 
                 # Transcript
                 clean_response = SENTIMENT_PATTERN.sub("", full_response)
@@ -598,6 +605,7 @@ async def websocket_endpoint(websocket: WebSocket):
                 llm.trim_history()
                 is_speaking = False
                 await _broadcast({"type": "call_state", "state": "idle"})
+                logger.info(f"[TWILIO] generate_turn done: '{clean_response[:80]}'" if clean_response else "[TWILIO] generate_turn done (empty)")
 
             # Trigger greeting
             generating_task = asyncio.create_task(generate_turn(
