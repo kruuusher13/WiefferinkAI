@@ -61,10 +61,12 @@ class DeepgramSTT:
         )
         uri = f"wss://api.deepgram.com/v1/listen?{params}"
 
-        self._ws = await websockets.connect(
-            uri,
-            extra_headers={"Authorization": f"Token {DEEPGRAM_API_KEY}"},
-        )
+        # websockets 10.x uses extra_headers, 14+ uses additional_headers
+        headers = {"Authorization": f"Token {DEEPGRAM_API_KEY}"}
+        try:
+            self._ws = await websockets.connect(uri, additional_headers=headers)
+        except TypeError:
+            self._ws = await websockets.connect(uri, extra_headers=headers)
         self._connected = True
         self._receive_task = asyncio.create_task(self._receive_loop())
         logger.info(f"Deepgram connected (lang={self.language}, rate={self.sample_rate}Hz)")
