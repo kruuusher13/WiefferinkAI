@@ -122,7 +122,7 @@ class OfficeNoiseMixer:
         self._noise_pos = 0
         self._typing_pos = 0
         self._volume = NOISE_VOLUME
-        self._typing_volume = 0.04  # Subtle but audible typing
+        self._typing_volume = 0.12  # Clearly audible typing on phone calls
         logger.info(
             f"Office noise mixer initialized: {sample_rate}Hz, "
             f"noise={self._volume:.0%}, typing={self._typing_volume:.0%}"
